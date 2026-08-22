@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1787382634213,
+      "tag": "0000_tired_captain_stacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1787418835570,
+      "tag": "0001_icy_gideon",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787420165157,
+      "tag": "0002_fine_mentallo",
+      "breakpoints": true
+    }
+  ]
+}

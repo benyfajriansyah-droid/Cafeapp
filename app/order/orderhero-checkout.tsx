@@ -32,7 +32,7 @@ export default function OrderHeroCheckout() {
 
   useEffect(() => {
     let active = true;
-    fetch(`/api/orderhero?plan=${plan}`, { cache: "no-store" }).then((response) => response.json()).then((result: { checkoutReady?: boolean; supportWhatsapp?: string }) => {
+    fetch(`/api/orderhero?plan=${plan}`, { cache: "no-store" }).then((response) => response.json() as Promise<{ checkoutReady?: boolean; supportWhatsapp?: string }>).then((result) => {
       if (active) { setReady(Boolean(result.checkoutReady)); setSupportWhatsapp(result.supportWhatsapp ?? ""); }
     }).catch(() => active && setReady(false));
     return () => { active = false; };

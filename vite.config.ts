@@ -14,6 +14,12 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
+  // Konfigurasi aplikasi untuk `npm run dev`. Di produksi, isi variabel yang sama lewat
+  // Wrangler secrets/vars atau control plane hosting — jangan ditulis di berkas ini.
+  vars: {
+    AUTH_TRUSTED_PROXY: process.env.AUTH_TRUSTED_PROXY ?? "chatgpt-sites",
+    PLATFORM_ADMIN_EMAILS: process.env.PLATFORM_ADMIN_EMAILS ?? "",
+  },
   d1_databases: d1
     ? [
         {

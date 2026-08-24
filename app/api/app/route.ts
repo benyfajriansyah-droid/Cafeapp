@@ -31,6 +31,7 @@ import {
   type Entitlement,
 } from "../../lib/plans";
 import { calculateOrder, clampPercent, positiveRupiah, rupiah, weightedAverageCost } from "../../lib/money";
+import { chunkRows } from "../../lib/chunk";
 import { isPlatformAdmin, safeErrorMessage, UserFacingError } from "../../lib/platform";
 import { seedDemoWorkspace } from "../../lib/demo-data";
 
@@ -560,7 +561,18 @@ const handlers: Record<string, Handler> = {
       await context.db.delete(recipes).where(inArray(recipes.productId, demoProducts.map((row) => row.id)));
       await context.db.delete(products).where(inArray(products.id, demoProducts.map((row) => row.id)));
     }
-    await context.db.delete(ingredients).where(and(eq(ingredients.workspaceId, context.workspace.id), eq(ingredients.isDemo, true)));
+
+    // Bahan contoh bisa dipakai di resep produk asli yang dibuat pelanggan saat mencoba.
+    // Resep itu harus ikut dilepas, kalau tidak stoknya menunjuk bahan yang sudah tidak ada
+    // dan penjualan berikutnya diam-diam berhenti memotong stok.
+    const demoIngredients = await context.db.select({ id: ingredients.id }).from(ingredients)
+      .where(and(eq(ingredients.workspaceId, context.workspace.id), eq(ingredients.isDemo, true)));
+    if (demoIngredients.length) {
+      const ids = demoIngredients.map((row) => row.id);
+      await context.db.delete(recipes).where(and(eq(recipes.workspaceId, context.workspace.id), inArray(recipes.ingredientId, ids)));
+      await context.db.delete(stockMovements).where(and(eq(stockMovements.workspaceId, context.workspace.id), inArray(stockMovements.ingredientId, ids)));
+      await context.db.delete(ingredients).where(inArray(ingredients.id, ids));
+    }
 
     return { ok: true, message: "Data contoh dihapus" };
   },
@@ -596,9 +608,12 @@ const handlers: Record<string, Handler> = {
       },
     );
 
-    const requestedDiscount = Math.max(0, rupiah(Number(body.discount ?? 0)));
-    if (requestedDiscount > totals.discount) {
-      fail(`Diskon melebihi batas peran lo (maksimal ${workspace.cashierDiscountPercent}% dari subtotal)`, 403);
+    if (totals.blockedByRoleLimit) {
+      fail(
+        `Diskon melebihi batas peran lo — maksimal ${workspace.cashierDiscountPercent}% dari subtotal `
+        + `(${totals.discountCeiling}). Minta owner atau manager kalau perlu lebih.`,
+        403,
+      );
     }
 
     // Resep untuk semua produk diambil sekali, bukan satu query per produk.
@@ -638,11 +653,13 @@ const handlers: Record<string, Handler> = {
         customerName: text(body.customerName), customerPhone: text(body.customerPhone),
         notes: text(body.notes), cashierEmail: context.email,
       }),
-      db.insert(orderItems).values(lines.map((line) => ({
+      // Item pesanan dipecah menurut batas parameter D1: pesanan belasan item akan
+      // ditolak seluruhnya kalau dikirim sebagai satu insert.
+      ...chunkRows(lines.map((line) => ({
         id: id("itm"), orderId, productId: line.product.id, productName: line.product.name,
         quantity: line.quantity, unitPrice: line.product.price, unitCost: line.product.cost,
         subtotal: line.product.price * line.quantity,
-      }))),
+      })), 8).map((rows) => db.insert(orderItems).values(rows)),
     ];
 
     for (const [ingredientId, used] of usage) {
@@ -833,11 +850,11 @@ const handlers: Record<string, Handler> = {
     const statements: BatchItem<"sqlite">[] = [
       context.db.delete(recipes).where(and(eq(recipes.workspaceId, context.workspace.id), eq(recipes.productId, product.id))),
     ];
-    if (lines.length) {
-      statements.push(context.db.insert(recipes).values(lines.map((line) => ({
-        id: id("rcp"), workspaceId: context.workspace.id, productId: product.id,
-        ingredientId: line.ingredient.id, quantity: line.quantity,
-      }))));
+    for (const rows of chunkRows(lines.map((line) => ({
+      id: id("rcp"), workspaceId: context.workspace.id, productId: product.id,
+      ingredientId: line.ingredient.id, quantity: line.quantity,
+    })), 5)) {
+      statements.push(context.db.insert(recipes).values(rows));
     }
     await runBatch(context.db, statements);
 

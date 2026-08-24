@@ -52,6 +52,27 @@ test("kasir dibatasi persentase diskon yang ditetapkan pemilik", () => {
   assert.equal(noDiscountAllowed.discount, 0);
 });
 
+test("diskon di atas subtotal cukup dipotong, bukan ditolak", () => {
+  // Bug sebelumnya: owner yang mengetik diskon lebih besar dari subtotal ikut ditolak,
+  // padahal yang membatasi cuma nilai transaksinya sendiri.
+  const owner = calculateOrder(lines, { requestedDiscount: 999_999, taxPercent: 0, discountRule: openDiscount });
+  assert.equal(owner.discount, 84_000);
+  assert.equal(owner.blockedByRoleLimit, false);
+
+  // Kasir dengan batas 100% juga tidak dianggap melanggar.
+  const fullCashier = calculateOrder(lines, {
+    requestedDiscount: 999_999, taxPercent: 0, discountRule: { unlimited: false, maxPercent: 100 },
+  });
+  assert.equal(fullCashier.blockedByRoleLimit, false);
+
+  // Yang ditolak hanya kalau batas perannya yang menahan.
+  const limited = calculateOrder(lines, {
+    requestedDiscount: 50_000, taxPercent: 0, discountRule: { unlimited: false, maxPercent: 10 },
+  });
+  assert.equal(limited.blockedByRoleLimit, true);
+  assert.equal(limited.discountCeiling, 8_400);
+});
+
 test("owner dan manager boleh memberi diskon penuh", () => {
   const totals = calculateOrder(lines, {
     requestedDiscount: 20_000, taxPercent: 0, discountRule: { unlimited: true, maxPercent: 0 },

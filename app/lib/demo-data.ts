@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { getDb } from "../../db";
 import { expenses, ingredients, orderItems, orders, products, recipes, shifts } from "../../db/schema";
+import { chunkRows } from "./chunk";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -79,15 +80,27 @@ export async function seedDemoWorkspace(db: Db, workspaceId: string, branchId: s
     };
   });
 
-  await db.insert(products).values(demoProducts.map((product) => ({ ...product, workspaceId, isDemo: true })));
-  await db.insert(ingredients).values(demoIngredients.map((ingredient) => ({ ...ingredient, workspaceId, isDemo: true })));
-  await db.insert(recipes).values(demoRecipes.map((recipe) => ({ ...recipe, id: rowId("rcp"), workspaceId })));
-  await db.insert(orders).values(orderRows.map((row) => row.order));
-  await db.insert(orderItems).values(orderRows.map(({ order, item }) => ({
+  // Tiap insert dipecah menurut lebar tabelnya supaya tidak melewati batas parameter D1.
+  for (const rows of chunkRows(demoProducts.map((product) => ({ ...product, workspaceId, isDemo: true })), 10)) {
+    await db.insert(products).values(rows);
+  }
+  for (const rows of chunkRows(demoIngredients.map((ingredient) => ({ ...ingredient, workspaceId, isDemo: true })), 11)) {
+    await db.insert(ingredients).values(rows);
+  }
+  for (const rows of chunkRows(demoRecipes.map((recipe) => ({ ...recipe, id: rowId("rcp"), workspaceId })), 5)) {
+    await db.insert(recipes).values(rows);
+  }
+  for (const rows of chunkRows(orderRows.map((row) => row.order), 20)) {
+    await db.insert(orders).values(rows);
+  }
+  const demoItems = orderRows.map(({ order, item }) => ({
     id: rowId("itm"), orderId: order.id, productId: item.sale.product.id,
     productName: item.sale.product.name, quantity: item.sale.quantity,
     unitPrice: item.sale.product.price, unitCost: item.sale.product.cost, subtotal: item.total,
-  })));
+  }));
+  for (const rows of chunkRows(demoItems, 8)) {
+    await db.insert(orderItems).values(rows);
+  }
   await db.insert(expenses).values([
     { id: rowId("exp"), workspaceId, branchId, category: "Bahan bakar", amount: 23_000, paymentMethod: "Tunai", note: "Gas LPG", transactionDate: today, isDemo: true },
     { id: rowId("exp"), workspaceId, branchId, category: "Operasional", amount: 85_000, paymentMethod: "Transfer", note: "Air galon & tisu", transactionDate: today, isDemo: true },

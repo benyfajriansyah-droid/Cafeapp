@@ -22,6 +22,10 @@ export type OrderTotals = {
   tax: number;
   total: number;
   cogs: number;
+  /** Diskon terbesar yang boleh diberikan peran ini. */
+  discountCeiling: number;
+  /** True hanya kalau batas peran — bukan besarnya subtotal — yang memotong diskon. */
+  blockedByRoleLimit: boolean;
 };
 
 export type DiscountRule = {
@@ -49,12 +53,17 @@ export function calculateOrder(lines: CartLine[], options: {
   const ceiling = options.discountRule.unlimited
     ? subtotal
     : Math.min(subtotal, Math.floor(subtotal * clampPercent(options.discountRule.maxPercent) / 100));
-  const discount = Math.min(Math.max(0, rupiah(options.requestedDiscount)), ceiling);
+  const requested = Math.max(0, rupiah(options.requestedDiscount));
+  const discount = Math.min(requested, ceiling);
+
+  // Diskon yang lebih besar dari subtotal cukup dipotong diam-diam — itu bukan pelanggaran
+  // aturan. Yang perlu ditolak hanya kalau batas perannya yang menahan.
+  const blockedByRoleLimit = requested > ceiling && ceiling < subtotal;
 
   const taxable = subtotal - discount;
   const tax = Math.round(taxable * clampPercent(options.taxPercent) / 100);
 
-  return { subtotal, discount, tax, total: taxable + tax, cogs };
+  return { subtotal, discount, tax, total: taxable + tax, cogs, discountCeiling: ceiling, blockedByRoleLimit };
 }
 
 export function clampPercent(value: unknown): number {

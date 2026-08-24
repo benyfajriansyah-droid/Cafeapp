@@ -27,7 +27,9 @@ export function isPlatformAdmin(email: string): boolean {
  * nama tabel, kolom, dan bentuk query kepada siapa pun yang sengaja memancing error.
  */
 export function safeErrorMessage(error: unknown, context: string): string {
-  const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  // Drizzle membungkus kegagalan D1 dan menyimpan penyebab aslinya di `cause`. Tanpa ikut
+  // membaca rantai itu, log cuma berisi teks query dan penyebabnya tidak pernah kelihatan.
+  const detail = describe(error);
   console.error(`[famz] ${context} gagal — ${detail}`);
 
   if (detail.includes("no such table") || detail.includes("no such column")) {
@@ -37,6 +39,13 @@ export function safeErrorMessage(error: unknown, context: string): string {
     return "Koneksi database belum siap. Hubungi dukungan kalau berlanjut.";
   }
   return "Terjadi kesalahan di server. Coba lagi sebentar lagi.";
+}
+
+function describe(error: unknown, depth = 0): string {
+  if (!(error instanceof Error)) return String(error);
+  const cause = (error as { cause?: unknown }).cause;
+  const nested = cause && depth < 4 ? ` <- ${describe(cause, depth + 1)}` : "";
+  return `${error.name}: ${error.message}${nested}`;
 }
 
 /** Error yang pesannya memang ditujukan untuk pengguna. */

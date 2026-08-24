@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Deploy yang rusak langsung kena pelanggan yang bayar, jadi build, lint, typecheck,
+# dan test dijalankan untuk setiap perubahan — bukan hanya kalau ada yang ingat.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: npm
+
+      - name: Pasang dependency
+        run: npm ci
+
+      - name: Lint
+        run: npx eslint . --ignore-pattern dist --ignore-pattern .next
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npx vinext build
+
+      # Termasuk uji migrasi, yang menerapkan seluruh berkas drizzle ke SQLite sungguhan
+      # dan memastikan data lama selamat.
+      - name: Test
+        run: node --experimental-strip-types --test tests/*.test.mjs

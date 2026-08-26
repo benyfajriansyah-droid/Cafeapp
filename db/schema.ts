@@ -162,3 +162,62 @@ export const subscriptionClaims = sqliteTable("subscription_claims", {
   index("subscription_claims_workspace_idx").on(table.workspaceId, table.createdAt),
   index("subscription_claims_email_idx").on(table.buyerEmail),
 ]);
+
+// ---------------------------------------------------------------------------
+// Autentikasi mandiri
+//
+// Identitas tidak lagi diambil dari header proxy. Aplikasi menyimpan akunnya sendiri,
+// jadi bisa dipasang di domain mana pun tanpa bergantung pada satu penyedia hosting.
+// ---------------------------------------------------------------------------
+
+export const users = sqliteTable("users", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  // Format: pbkdf2$sha256$<iterasi>$<salt_b64url>$<hash_b64url>. Jumlah iterasi ikut disimpan
+  // supaya bisa dinaikkan kapan pun tanpa membatalkan kata sandi yang sudah ada.
+  passwordHash: text("password_hash").notNull(),
+  name: text("name").notNull().default(""),
+  status: text("status").notNull().default("active"),
+  // Percobaan masuk yang gagal berturut-turut; direset setiap kali berhasil.
+  failedAttempts: integer("failed_attempts").notNull().default(0),
+  lockedUntil: text("locked_until"),
+  lastLoginAt: text("last_login_at"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [index("users_email_idx").on(table.email)]);
+
+export const sessions = sqliteTable("sessions", {
+  // Yang disimpan adalah SHA-256 dari token, bukan tokennya. Salinan database yang bocor
+  // tidak bisa dipakai untuk menyamar jadi siapa pun.
+  tokenHash: text("token_hash").primaryKey(),
+  userId: text("user_id").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  lastSeenAt: text("last_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("sessions_user_idx").on(table.userId),
+  index("sessions_expires_idx").on(table.expiresAt),
+]);
+
+export const passwordResets = sqliteTable("password_resets", {
+  tokenHash: text("token_hash").primaryKey(),
+  userId: text("user_id").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  usedAt: text("used_at"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [index("password_resets_user_idx").on(table.userId)]);
+
+export const invitations = sqliteTable("invitations", {
+  tokenHash: text("token_hash").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  email: text("email").notNull(),
+  role: text("role").notNull().default("cashier"),
+  name: text("name").notNull().default(""),
+  invitedBy: text("invited_by").notNull().default(""),
+  expiresAt: text("expires_at").notNull(),
+  acceptedAt: text("accepted_at"),
+  revokedAt: text("revoked_at"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("invitations_workspace_idx").on(table.workspaceId, table.createdAt),
+  index("invitations_email_idx").on(table.email),
+]);

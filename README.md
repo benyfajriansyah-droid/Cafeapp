@@ -2,18 +2,44 @@
 
 Sistem operasional dan SaaS untuk usaha kopi rumahan, booth, kedai, dan bisnis multi-outlet. Famz Coffee OS menghubungkan kasir, resep, stok bahan, pembelian, biaya, shift kas, serta laporan laba dalam satu workspace.
 
-## ⚠️ Konfigurasi wajib sebelum deploy
+## Konfigurasi sebelum deploy
 
-Aplikasi ini **sengaja gagal aman**: tanpa dua variabel di bawah, tidak ada yang bisa masuk dan tidak ada yang jadi admin. Isi keduanya di Wrangler vars/secrets atau control plane hosting sebelum menjalankan di produksi.
+Aplikasi ini punya sistem akun sendiri — email dan kata sandi, sesi tersimpan di database, tanpa bergantung pada penyedia hosting mana pun. Bisa dipasang di domain sendiri.
 
 | Variabel | Isi | Kalau kosong |
 |---|---|---|
-| `AUTH_TRUSTED_PROXY` | `chatgpt-sites` | Tidak ada pengguna yang dikenali; semua permintaan dianggap belum masuk |
+| `APP_URL` | Alamat publik aplikasi, mis. `https://app.domain-lo.com` | Tautan di email memakai host permintaan; aman di Workers, tapi sebaiknya dikunci |
 | `PLATFORM_ADMIN_EMAILS` | Email admin, dipisah koma | Panel **Penjualan SaaS** tidak bisa dibuka siapa pun |
+| `RESEND_API_KEY` | Kunci API Resend (rahasia) | Reset kata sandi tidak terkirim; tautannya hanya masuk ke log server |
+| `MAIL_FROM` | Pengirim, mis. `Famz Coffee OS <halo@domain-lo.com>` | Sama seperti di atas |
 
-**Kenapa `AUTH_TRUSTED_PROXY` perlu dinyatakan.** Identitas pengguna diambil dari header `oai-authenticated-user-email` yang disuntikkan proxy ChatGPT Sites. Header itu hanya aman selama ada proxy di depan aplikasi yang menghapus versi palsunya. Kalau aplikasi dijalankan langsung — domain sendiri, VPS, Workers tanpa proxy, atau deployment preview — siapa pun bisa mengirim header itu dan langsung menjadi pemilik atau admin. Variabel ini memaksa keputusan itu jadi eksplisit.
+Yang rahasia dipasang lewat `npx wrangler secret put RESEND_API_KEY -c wrangler.deploy.jsonc`, bukan ditulis di berkas konfigurasi.
 
-Kalau nanti pindah dari ChatGPT Sites, ganti dulu lapisan autentikasi di `app/chatgpt-auth.ts` dengan sesi bertanda tangan atau OAuth yang diverifikasi sendiri.
+**`PLATFORM_ADMIN_EMAILS` sengaja tanpa nilai bawaan.** Kalau kosong, tidak ada seorang pun yang jadi admin. Lebih baik panel penjualan tidak bisa dibuka daripada bisa dibuka siapa saja.
+
+**Kata sandi butuh Workers berbayar.** Masuk dan daftar memakai PBKDF2 210.000 iterasi (±32 ms CPU per permintaan). Itu melewati batas 10 ms paket Workers gratis. Jumlah iterasi tersimpan di dalam setiap hash, jadi bisa dinaikkan kapan pun tanpa membatalkan kata sandi yang sudah ada.
+
+## Deploy ke Cloudflare sendiri
+
+```bash
+npx wrangler d1 create famz-coffee-os
+# salin database_id ke wrangler.deploy.jsonc, lalu:
+npx wrangler d1 migrations apply famz-coffee-os --remote -c wrangler.deploy.jsonc
+npx wrangler secret put RESEND_API_KEY -c wrangler.deploy.jsonc
+npm run build
+npx wrangler deploy -c wrangler.deploy.jsonc
+```
+
+Berkasnya sengaja bernama `wrangler.deploy.jsonc`, bukan `wrangler.jsonc`: `npm run dev` memakai konfigurasi Worker-nya sendiri lewat plugin Vite, dan kalau ada `wrangler.jsonc` di akar proyek keduanya bergabung lalu bentrok.
+
+## Akun dan akses
+
+- **Daftar dan masuk** di `/daftar` dan `/masuk`. Kata sandi minimal 10 karakter, disimpan sebagai PBKDF2-SHA256.
+- **Sesi** berumur 30 hari, disimpan sebagai cookie `HttpOnly` + `SameSite=Lax`. Yang tersimpan di database hanya SHA-256 token-nya, jadi salinan database yang bocor tidak bisa dipakai untuk menyamar.
+- **Undangan tim** dibuat sebagai tautan yang terikat ke satu alamat email dan berlaku 7 hari. Salin dari layar lalu kirim lewat WhatsApp — tidak butuh konfigurasi email.
+- **Lupa kata sandi** di `/lupa-password`. Ini satu-satunya fitur yang benar-benar butuh `RESEND_API_KEY`.
+- **Percobaan masuk** dibatasi 8 kali berturut-turut per akun, lalu terkunci 15 menit.
+- Mengganti atau mengatur ulang kata sandi mengakhiri semua sesi lain di perangkat mana pun.
 
 ## Fitur utama
 
@@ -62,7 +88,7 @@ Memilih paket di dalam aplikasi hanya membuat tagihan — tidak pernah memberi h
 - Tailwind CSS
 - Cloudflare Workers dan D1
 - Drizzle ORM
-- Sign in with ChatGPT melalui Sites
+- Autentikasi mandiri: kata sandi PBKDF2 dan sesi berbasis cookie
 
 ## Menjalankan project
 
@@ -82,6 +108,7 @@ npm run build      # build terbatas waktu
 npm test           # uji logika + migrasi
 npm run test:build # build dulu, lalu seluruh uji termasuk hasil build
 npm run db:generate
+npm run db:migrate:local  # terapkan migrasi ke D1 lokal (dev)
 ```
 
 Migrasi database ada di `drizzle/` dan diterapkan berurutan. `npm test` menjalankan seluruh migrasi ke SQLite sungguhan dan memeriksa data lama tetap utuh.
@@ -91,19 +118,30 @@ Migrasi database ada di `drizzle/` dan diterapkan berurutan. `npm test` menjalan
 ```text
 app/
   page.tsx              Landing page publik
+  masuk/ daftar/        Halaman masuk dan daftar
+  lupa-password/        Permintaan tautan reset
+  atur-password/        Membuat kata sandi baru dari tautan
+  keluar/               Mengakhiri sesi (selalu lewat POST)
   app/page.tsx          Aplikasi yang membutuhkan sign-in
   coffee-app.tsx        Shell dashboard, pemilih outlet, struk
   modules/              Satu berkas per layar (kasir, laporan, stok, dst)
   lib/
+    auth/password.ts    Hash PBKDF2 dan perbandingan aman-waktu
+    auth/session.ts     Cookie sesi, penjaga asal permintaan, tujuan aman
+    auth/tokens.ts      Token acak untuk sesi, undangan, dan reset
+    auth/mail.ts        Pengiriman email opsional lewat Resend
     plans.ts            Paket, batas, dan hak akses langganan
     money.ts            Hitungan pesanan, pajak, diskon, laba
     chunk.ts            Pemecah insert agar tidak melewati batas parameter D1
     platform.ts         Admin platform dan sanitasi pesan error
     reference.ts        Kode checkout OrderHero
+  api/auth/route.ts     Daftar, masuk, keluar, reset, terima undangan
   api/app/route.ts      API dan pemeriksaan hak akses
 db/schema.ts            Skema data multi-tenant
 drizzle/                Migrasi database
-tests/                  Uji logika, batas D1, dan migrasi
+scripts/migrate-local.mjs  Menerapkan migrasi ke D1 lokal saat pengembangan
+tests/                  Uji logika, autentikasi, batas D1, dan migrasi
+wrangler.deploy.jsonc   Konfigurasi deploy ke Cloudflare sendiri
 ```
 
 ## Keamanan data
@@ -112,16 +150,18 @@ Semua query dan aksi ditautkan ke `workspaceId`, dan aksi tulis diperiksa berdas
 
 Nominal uang disimpan sebagai integer rupiah supaya penjumlahan di laporan tidak mengakumulasi galat floating point. Yang tetap pecahan hanya besaran fisik bahan dan harga per satuan.
 
+Kata sandi tidak pernah disimpan, hanya turunan PBKDF2-nya dengan salt acak per akun. Token sesi, undangan, dan reset juga hanya disimpan sebagai SHA-256 — yang bocor dari salinan database tidak bisa dipakai untuk masuk. Permintaan tulis wajib berasal dari origin aplikasi sendiri, jadi form dari situs lain tidak bisa menumpang sesi yang sedang aktif.
+
 Pesan error dari server disanitasi sebelum dikirim ke browser; detail lengkapnya hanya masuk log.
 
 ## Roadmap komersial
 
 - Integrasi payment gateway Indonesia langsung
-- Email undangan tim dan notifikasi tagihan
+- Notifikasi tagihan lewat email dan WhatsApp
 - Ekspor laporan PDF/Excel
 - Target penjualan dan perencanaan batch produksi
 - Dukungan printer Bluetooth/ESC-POS
-- Autentikasi mandiri supaya bisa lepas dari ChatGPT Sites
+- Masuk dengan Google
 
 ## Catatan
 

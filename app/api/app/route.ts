@@ -1,6 +1,8 @@
-import { and, desc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
+import { env } from "cloudflare:workers";
+import { and, desc, eq, gt, gte, inArray, isNull, lte, ne, sql } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
-import { getChatGPTUser } from "../../chatgpt-auth";
+import { assertSameOrigin, getSessionUser } from "../../lib/auth/session";
+import { INVITATION_LIFETIME_MS, hashToken, isoIn, newLinkToken } from "../../lib/auth/tokens";
 import { getDb } from "../../../db";
 import {
   branches,
@@ -16,6 +18,7 @@ import {
   shifts,
   stockMovements,
   subscriptionClaims,
+  invitations,
   workspaces,
 } from "../../../db/schema";
 import {
@@ -41,6 +44,7 @@ type Branch = typeof branches.$inferSelect;
 type Member = typeof members.$inferSelect;
 
 type Context = {
+  request: Request;
   db: Db;
   workspace: Workspace;
   branch: Branch;
@@ -66,11 +70,29 @@ function fail(message: string, status = 400): never {
   throw new UserFacingError(message, status);
 }
 
+/**
+ * Alamat dasar untuk tautan yang dibagikan ke luar aplikasi.
+ *
+ * `APP_URL` diutamakan supaya tautan undangan tetap menunjuk ke domain resmi walau permintaannya
+ * datang lewat host lain.
+ */
+function appOrigin(request: Request): string {
+  const configured = typeof env.APP_URL === "string" ? env.APP_URL.trim() : "";
+  if (configured) {
+    try {
+      return new URL(configured).origin;
+    } catch {
+      console.error(`[famz] APP_URL bukan URL yang valid: ${configured}`);
+    }
+  }
+  return new URL(request.url).origin;
+}
+
 /* ------------------------------------------------------------------ *
  * Konteks & hak akses
  * ------------------------------------------------------------------ */
 
-async function getContext(email: string, requestedBranchId?: string): Promise<Context> {
+async function getContext(request: Request, email: string, requestedBranchId?: string): Promise<Context> {
   const db = getDb();
   let workspace = await db.query.workspaces.findFirst({ where: eq(workspaces.ownerEmail, email) });
 
@@ -118,7 +140,7 @@ async function getContext(email: string, requestedBranchId?: string): Promise<Co
   const branch = requested ?? activeBranches[0] ?? branchList[0];
 
   return {
-    db, workspace, branch, branchList, currentMember, email,
+    request, db, workspace, branch, branchList, currentMember, email,
     entitlement: entitlementOf(workspace),
     platformAdmin: isPlatformAdmin(email),
   };
@@ -191,12 +213,12 @@ function orderConditions(workspaceId: string, branchId: string | null, range: { 
 }
 
 export async function GET(request: Request) {
-  const user = await getChatGPTUser();
+  const user = await getSessionUser();
   if (!user) return Response.json({ error: "Silakan masuk terlebih dahulu" }, { status: 401 });
 
   try {
     const url = new URL(request.url);
-    const context = await getContext(user.email, url.searchParams.get("branch") ?? undefined);
+    const context = await getContext(request, user.email, url.searchParams.get("branch") ?? undefined);
     const { db, workspace, branch, branchList, currentMember, entitlement, platformAdmin } = context;
 
     const range = rangeOf(url);
@@ -269,7 +291,7 @@ export async function GET(request: Request) {
       ? await db.select().from(orderItems).where(inArray(orderItems.orderId, orderRows.map((row) => row.id)))
       : [];
 
-    const [productRows, ingredientRows, recipeRows, expenseRows, movementRows, shiftRows, memberRows, billingRows] =
+    const [productRows, ingredientRows, recipeRows, expenseRows, movementRows, shiftRows, memberRows, billingRows, invitationRows] =
       await Promise.all([
         db.select().from(products).where(eq(products.workspaceId, workspace.id)).orderBy(products.category, products.name),
         db.select().from(ingredients).where(eq(ingredients.workspaceId, workspace.id)).orderBy(ingredients.name),
@@ -283,6 +305,12 @@ export async function GET(request: Request) {
           .orderBy(desc(shifts.openedAt)).limit(30),
         db.select().from(members).where(eq(members.workspaceId, workspace.id)).orderBy(members.role, members.name),
         db.select().from(billingInvoices).where(eq(billingInvoices.workspaceId, workspace.id)).orderBy(desc(billingInvoices.createdAt)).limit(50),
+        db.select().from(invitations).where(and(
+          eq(invitations.workspaceId, workspace.id),
+          isNull(invitations.acceptedAt),
+          isNull(invitations.revokedAt),
+          gt(invitations.expiresAt, new Date().toISOString()),
+        )).orderBy(desc(invitations.createdAt)).limit(50),
       ]);
 
     const [claimRows, settingRows] = await Promise.all([
@@ -328,6 +356,17 @@ export async function GET(request: Request) {
       stockMovements: movementRows,
       shifts: shiftRows,
       members: memberRows,
+      // Token undangannya sendiri tidak pernah dikirim ke klien — hanya hash-nya, yang cukup
+      // untuk mencabut undangan tapi tidak bisa dipakai untuk menerimanya.
+      invitations: invitationRows.map((row) => ({
+        tokenHash: row.tokenHash,
+        email: row.email,
+        role: row.role,
+        name: row.name,
+        invitedBy: row.invitedBy,
+        expiresAt: row.expiresAt,
+        createdAt: row.createdAt,
+      })),
       billingInvoices: billingRows,
     });
   } catch (error) {
@@ -344,7 +383,18 @@ type Body = Record<string, unknown>;
 type Handler = (context: Context, body: Body) => Promise<unknown>;
 
 export async function POST(request: Request) {
-  const user = await getChatGPTUser();
+  // Sesi berbasis cookie ikut terkirim otomatis oleh browser. Tanpa pemeriksaan asal
+  // permintaan, form dari situs lain bisa memakai sesi korban untuk menulis data.
+  try {
+    await assertSameOrigin(request);
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : "Permintaan ditolak" },
+      { status: 403 },
+    );
+  }
+
+  const user = await getSessionUser();
   if (!user) return Response.json({ error: "Silakan masuk terlebih dahulu" }, { status: 401 });
 
   try {
@@ -353,7 +403,7 @@ export async function POST(request: Request) {
     const handler = handlers[action];
     if (!handler) return Response.json({ error: "Aksi tidak dikenali" }, { status: 400 });
 
-    const context = await getContext(user.email, text(body.branchId) || undefined);
+    const context = await getContext(request, user.email, text(body.branchId) || undefined);
 
     // Satu penjaga untuk seluruh API: langganan mati berarti data operasional tidak boleh
     // berubah lagi. Yang tersisa hanya jalan keluar — memilih paket dan menghubungkan pembayaran.
@@ -993,24 +1043,75 @@ const handlers: Record<string, Handler> = {
    * Tim & outlet
    * ---------------------------------------------------------------- */
 
+  /**
+   * Mengundang anggota tim.
+   *
+   * Tidak langsung membuat keanggotaan aktif: yang dibuat adalah undangan bertoken yang
+   * terikat ke satu alamat email. Tanpa itu, siapa pun bisa menambahkan email orang lain ke
+   * workspace-nya dan menarik orang itu masuk begitu dia mendaftar.
+   *
+   * Tautannya dikembalikan ke layar supaya bisa disalin dan dikirim lewat WhatsApp — cara
+   * yang jauh lebih umum dipakai usaha kecil di sini daripada email.
+   */
   "create-member": async (context, body) => {
     require_(context, "manage");
     const memberEmail = text(body.email).toLowerCase();
     if (!memberEmail.includes("@")) fail("Email anggota tim tidak valid");
     const role = assignableRole(context, body.role);
+    const name = text(body.name);
 
     const memberRows = await context.db.select().from(members).where(eq(members.workspaceId, context.workspace.id));
     const limit = limitsFor(context.entitlement).members;
-    if (memberRows.length >= limit) {
+    const pending = await context.db.select().from(invitations).where(
+      and(
+        eq(invitations.workspaceId, context.workspace.id),
+        isNull(invitations.acceptedAt),
+        isNull(invitations.revokedAt),
+        gt(invitations.expiresAt, new Date().toISOString()),
+      ),
+    );
+    // Undangan yang belum diterima ikut dihitung; kalau tidak, batas paket bisa dilewati
+    // dengan mengundang lebih banyak orang daripada kuota lalu menunggu mereka masuk.
+    if (memberRows.length + pending.length >= limit) {
       fail(`Paket ${context.entitlement.plan ?? "nonaktif"} maksimal ${limit} pengguna. Naikkan paket untuk menambah tim.`);
     }
     if (memberRows.some((member) => member.email === memberEmail)) fail("Email ini sudah terdaftar di tim");
+    if (pending.some((invitation) => invitation.email === memberEmail)) {
+      fail("Undangan untuk email ini masih berlaku. Cabut dulu kalau mau mengirim ulang.");
+    }
 
-    await context.db.insert(members).values({
-      id: id("mem"), workspaceId: context.workspace.id, email: memberEmail,
-      name: text(body.name), role, invitedBy: context.email,
+    const token = newLinkToken();
+    await context.db.insert(invitations).values({
+      tokenHash: await hashToken(token),
+      workspaceId: context.workspace.id,
+      email: memberEmail,
+      role,
+      name,
+      invitedBy: context.email,
+      expiresAt: isoIn(INVITATION_LIFETIME_MS),
     });
-    return { ok: true };
+
+    return {
+      ok: true,
+      message: "Undangan dibuat. Salin tautannya dan kirim ke anggota tim.",
+      invitationUrl: `${appOrigin(context.request)}/daftar?undangan=${token}`,
+      invitationEmail: memberEmail,
+    };
+  },
+
+  "revoke-invitation": async (context, body) => {
+    require_(context, "manage");
+    const tokenHash = text(body.tokenHash);
+    const invitation = await context.db.query.invitations.findFirst({
+      where: and(eq(invitations.tokenHash, tokenHash), eq(invitations.workspaceId, context.workspace.id)),
+    });
+    if (!invitation) fail("Undangan tidak ditemukan");
+    if (invitation.acceptedAt) fail("Undangan ini sudah diterima. Keluarkan lewat daftar tim.");
+
+    await context.db.update(invitations)
+      .set({ revokedAt: new Date().toISOString() })
+      .where(eq(invitations.tokenHash, tokenHash));
+    return { ok: true, message: "Undangan dicabut" };
   },
 
   "update-member": async (context, body) => {

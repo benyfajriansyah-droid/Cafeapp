@@ -14,7 +14,8 @@
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate",
     "typecheck": "bash scripts/sites-env.sh -- tsc --noEmit",
-    "test:build": "npm run build && node --experimental-strip-types --test tests/*.test.mjs"
+    "test:build": "npm run build && node --experimental-strip-types --test tests/*.test.mjs",
+    "db:migrate:local": "node scripts/migrate-local.mjs"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",

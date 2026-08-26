@@ -29,6 +29,13 @@
       "when": 1787582367506,
       "tag": "0003_lowly_network",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1787737712575,
+      "tag": "0004_pink_gladiator",
+      "breakpoints": true
     }
   ]
 }

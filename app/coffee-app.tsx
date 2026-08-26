@@ -2,7 +2,7 @@
 
 import {
   BadgeDollarSign, BarChart3, Boxes, Building2, Check, CircleAlert, ClipboardList, Coffee,
-  LayoutDashboard, Menu, PackagePlus, Plus, ReceiptText, RefreshCw, Settings as SettingsIcon,
+  LayoutDashboard, LogOut, Menu, PackagePlus, Plus, ReceiptText, RefreshCw, Settings as SettingsIcon,
   ShoppingCart, UserPlus, UsersRound, WalletCards, X,
 } from "lucide-react";
 import { useState } from "react";
@@ -175,6 +175,9 @@ export default function CoffeeApp({ userName }: { userName: string }) {
             <b>{data.currentMember.name || userName.split("@")[0]}</b>
             <small className="capitalize">{data.currentMember.role}</small>
           </div>
+          <a className="sign-out" href="/keluar" aria-label="Keluar dari akun">
+            <LogOut size={16} />
+          </a>
         </div>
       </aside>
 

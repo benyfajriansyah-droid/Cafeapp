@@ -37,6 +37,20 @@ async function applyThrough(db, upTo = Infinity, from = 0) {
   return files;
 }
 
+/**
+ * Posisi migrasi yang namanya diawali prefiks tertentu.
+ *
+ * Uji di bawah menargetkan satu migrasi spesifik. Menyebutnya lewat "yang terakhir" membuat
+ * uji ini diam-diam berpindah sasaran setiap kali ada migrasi baru — persis yang terjadi
+ * saat migrasi autentikasi ditambahkan.
+ */
+async function indexOfMigration(prefix) {
+  const files = await migrationFiles();
+  const index = files.findIndex((name) => name.startsWith(prefix));
+  assert.notEqual(index, -1, `migrasi ${prefix} tidak ditemukan`);
+  return index;
+}
+
 test("semua migrasi berjalan berurutan dari database kosong", async () => {
   const db = new DatabaseSync(":memory:");
   const files = await applyThrough(db);
@@ -68,8 +82,8 @@ test("nominal uang tersimpan sebagai integer", async () => {
 
 test("data yang sudah ada selamat melewati migrasi", async () => {
   const db = new DatabaseSync(":memory:");
-  const files = await migrationFiles();
-  await applyThrough(db, files.length - 1);
+  const backfill = await indexOfMigration("0003");
+  await applyThrough(db, backfill);
 
   db.exec(`
     INSERT INTO workspaces(id, owner_email, name, slug, plan, tax_percent, subscription_status, billing_interval)
@@ -84,7 +98,7 @@ test("data yang sudah ada selamat melewati migrasi", async () => {
     VALUES('s1', 'ws1', 'br1', 'Raka', 500000, 510000, 10000, 'closed');
   `);
 
-  await applyThrough(db, files.length, files.length - 1);
+  await applyThrough(db, backfill + 1, backfill);
 
   const order = plain(db.prepare("SELECT order_no, subtotal, discount, tax, total, status FROM orders WHERE id = 'o1'").get());
   assert.deepEqual(order, { order_no: "FZ-1", subtotal: 54000, discount: 4000, tax: 0, total: 50000, status: "paid" });
@@ -99,8 +113,8 @@ test("data yang sudah ada selamat melewati migrasi", async () => {
 
 test("backfill memisahkan yang benar-benar bayar dari yang menaikkan paketnya sendiri", async () => {
   const db = new DatabaseSync(":memory:");
-  const files = await migrationFiles();
-  await applyThrough(db, files.length - 1);
+  const backfill = await indexOfMigration("0003");
+  await applyThrough(db, backfill);
 
   // wsA membayar dan klaimnya sudah disetujui admin.
   // wsB berstatus 'active' karena dulu paket bisa dipilih sendiri tanpa membayar.
@@ -113,7 +127,7 @@ test("backfill memisahkan yang benar-benar bayar dari yang menaikkan paketnya se
     VALUES('c1', 'wsA', 'FCO-A', 'A', 'a@x.com', '08', 'business', 'yearly', 3990000, 'activated', '2026-08-01T10:00:00Z');
   `);
 
-  await applyThrough(db, files.length, files.length - 1);
+  await applyThrough(db, backfill + 1, backfill);
 
   const paid = db.prepare("SELECT paid_plan, subscription_status, current_period_end FROM workspaces WHERE id = 'wsA'").get();
   assert.equal(paid.paid_plan, "business");

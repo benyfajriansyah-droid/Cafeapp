@@ -35,3 +35,25 @@ test("email admin platform tidak ikut ter-build ke dalam bundel", options, async
   const suspicious = emails.filter((entry) => !entry.endsWith("@app.local") && !entry.includes("example"));
   assert.deepEqual(suspicious, [], `alamat email ikut ter-build: ${suspicious.join(", ")}`);
 });
+
+test("halaman autentikasi ikut ter-build", options, async () => {
+  const workerSource = await readFile(distServer, "utf8");
+  const assetNames = await readdir(assetDirectory);
+
+  const authAsset = assetNames.find((name) => name.startsWith("auth-form-"));
+  assert.ok(authAsset, "bundel halaman masuk/daftar tidak ditemukan");
+  assert.match(await readFile(new URL(authAsset, assetDirectory), "utf8"), /Buat akun/);
+
+  assert.match(workerSource, /\/api\/auth/);
+  assert.match(workerSource, /password_hash/, "tabel akun harus ikut ter-build");
+  assert.match(workerSource, /famz_session/, "nama cookie sesi harus ikut ter-build");
+});
+
+test("header identitas dari proxy tidak lagi dipercaya di mana pun", options, async () => {
+  // Dulu siapa pun yang bisa mengirim header ini menjadi pemilik atau admin begitu aplikasi
+  // berjalan di luar proxy. Header itu harus benar-benar hilang dari hasil build, bukan
+  // sekadar tidak dipakai lagi di satu tempat.
+  const workerSource = await readFile(distServer, "utf8");
+  assert.doesNotMatch(workerSource, /oai-authenticated-user-email/);
+  assert.doesNotMatch(workerSource, /AUTH_TRUSTED_PROXY/);
+});

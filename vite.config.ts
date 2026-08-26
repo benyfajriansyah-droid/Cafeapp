@@ -17,8 +17,10 @@ const localBindingConfig = {
   // Konfigurasi aplikasi untuk `npm run dev`. Di produksi, isi variabel yang sama lewat
   // Wrangler secrets/vars atau control plane hosting — jangan ditulis di berkas ini.
   vars: {
-    AUTH_TRUSTED_PROXY: process.env.AUTH_TRUSTED_PROXY ?? "chatgpt-sites",
     PLATFORM_ADMIN_EMAILS: process.env.PLATFORM_ADMIN_EMAILS ?? "",
+    APP_URL: process.env.APP_URL ?? "",
+    RESEND_API_KEY: process.env.RESEND_API_KEY ?? "",
+    MAIL_FROM: process.env.MAIL_FROM ?? "",
   },
   d1_databases: d1
     ? [

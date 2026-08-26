@@ -37,6 +37,16 @@ export type Shift = {
   expectedCash: number | null; variance: number | null; status: string; openedAt: string; closedAt: string | null; note: string;
 };
 export type Member = { id: string; email: string; name: string; role: string; status: string };
+
+export type Invitation = {
+  tokenHash: string;
+  email: string;
+  role: string;
+  name: string;
+  invitedBy: string;
+  expiresAt: string;
+  createdAt: string;
+};
 export type BillingInvoice = { id: string; invoiceNo: string; plan: string; interval: string; amount: number; status: string; dueDate: string; paidAt: string | null };
 export type SubscriptionClaim = {
   id: string; workspaceId: string | null; checkoutReference: string; orderHeroInvoice: string;
@@ -73,6 +83,7 @@ export type AppData = {
   stockMovements: StockMovement[];
   shifts: Shift[];
   members: Member[];
+  invitations: Invitation[];
   billingInvoices: BillingInvoice[];
 };
 

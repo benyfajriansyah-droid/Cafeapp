@@ -1,6 +1,6 @@
 "use client";
 
-import { Boxes, CreditCard, Pencil, ShieldCheck, Store, Trash2, UserMinus } from "lucide-react";
+import { Boxes, Check, Copy, CreditCard, Pencil, ShieldCheck, Store, Trash2, UserMinus } from "lucide-react";
 import { useState } from "react";
 import {
   Empty, Field, Modal, SummaryStrip, canManage, isOwner, longDate, money,
@@ -93,6 +93,8 @@ export function Team({ data, saving, submit, openCreate, onCloseCreate }: Module
   openCreate: boolean; onCloseCreate: () => void;
 }) {
   const [editing, setEditing] = useState<Member | null>(null);
+  const [invite, setInvite] = useState<{ url: string; email: string } | null>(null);
+  const [copied, setCopied] = useState(false);
   const editable = canManage(data);
   const assignable = isOwner(data) ? ["manager", "cashier", "inventory"] : ["cashier", "inventory"];
 
@@ -130,6 +132,38 @@ export function Team({ data, saving, submit, openCreate, onCloseCreate }: Module
         </table>
       </div>
 
+      {data.invitations.length > 0 && (
+        <div className="invitation-list">
+          <div className="panel-header">
+            <div>
+              <h2>Undangan menunggu</h2>
+              <p>Anggota tim aktif setelah membuka tautannya dan membuat akun.</p>
+            </div>
+          </div>
+          {data.invitations.map((invitation) => (
+            <div className="invitation-row" key={invitation.tokenHash}>
+              <div>
+                <b>{invitation.name || invitation.email.split("@")[0]}</b>
+                <small>
+                  {invitation.email} · {roleLabels[invitation.role] ?? invitation.role} · berlaku sampai{" "}
+                  {longDate(invitation.expiresAt)}
+                </small>
+              </div>
+              {editable && (
+                <button
+                  type="button"
+                  className="row-action danger"
+                  disabled={saving}
+                  onClick={() => void submit("revoke-invitation", { tokenHash: invitation.tokenHash })}
+                >
+                  <Trash2 size={14} /> Cabut
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="role-note">
         <ShieldCheck size={16} />
         <p>
@@ -138,10 +172,41 @@ export function Team({ data, saving, submit, openCreate, onCloseCreate }: Module
         </p>
       </div>
 
+      {invite && (
+        <Modal
+          title="Undangan siap dikirim"
+          description={`Kirim tautan ini ke ${invite.email}. Berlaku 7 hari dan hanya bisa dipakai oleh email tersebut.`}
+          onClose={() => setInvite(null)}
+        >
+          <div className="invite-link">
+            <code>{invite.url}</code>
+            <button
+              type="button"
+              className="submit-button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(invite.url);
+                  setCopied(true);
+                  window.setTimeout(() => setCopied(false), 2200);
+                } catch {
+                  setCopied(false);
+                }
+              }}
+            >
+              {copied ? <><Check size={15} /> Tersalin</> : <><Copy size={15} /> Salin tautan</>}
+            </button>
+          </div>
+          <p className="invite-hint">
+            Paling gampang kirim lewat WhatsApp. Tautannya cuma bisa dipakai sekali — kalau salah
+            kirim, cabut undangannya dari daftar di atas.
+          </p>
+        </Modal>
+      )}
+
       {(openCreate || editing) && editable && (
         <Modal
           title={editing ? `Ubah ${editing.name || editing.email}` : "Tambah anggota tim"}
-          description="Anggota masuk memakai email yang sama; aksesnya mengikuti peran."
+          description="Undangan dibuat sebagai tautan. Salin dan kirim ke anggota tim lewat WhatsApp."
           onClose={() => { setEditing(null); onCloseCreate(); }}
         >
           <form onSubmit={async (event) => {
@@ -150,7 +215,15 @@ export function Team({ data, saving, submit, openCreate, onCloseCreate }: Module
             const result = editing
               ? await submit("update-member", { memberId: editing.id, ...payload })
               : await submit("create-member", payload);
-            if (result) { setEditing(null); onCloseCreate(); }
+            if (result) {
+              setEditing(null);
+              onCloseCreate();
+              const invitation = result as { invitationUrl?: string; invitationEmail?: string };
+              if (invitation.invitationUrl && invitation.invitationEmail) {
+                setInvite({ url: invitation.invitationUrl, email: invitation.invitationEmail });
+                setCopied(false);
+              }
+            }
           }}>
             <div className="form-grid">
               <Field label="Nama"><input name="name" required defaultValue={editing?.name} placeholder="Nama anggota" /></Field>

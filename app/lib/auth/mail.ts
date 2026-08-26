@@ -10,10 +10,9 @@
  * saja — cukup untuk pengembangan lokal, tidak cukup untuk produksi.
  */
 
-import { env } from "cloudflare:workers";
 
 export function isMailConfigured(): boolean {
-  return Boolean(env.RESEND_API_KEY && env.MAIL_FROM);
+  return Boolean(process.env.RESEND_API_KEY && process.env.MAIL_FROM);
 }
 
 export type MailMessage = {
@@ -35,11 +34,11 @@ export async function sendMail(message: MailMessage): Promise<boolean> {
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: env.MAIL_FROM,
+        from: process.env.MAIL_FROM,
         to: [message.to],
         subject: message.subject,
         text: message.text,

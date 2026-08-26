@@ -1,7 +1,7 @@
 /**
  * Aturan paket, batas, dan hak akses langganan.
  *
- * Modul ini sengaja murni — tanpa impor database atau Cloudflare — supaya bisa diuji
+ * Modul ini sengaja murni — tanpa impor database atau runtime — supaya bisa diuji
  * langsung dan supaya cuma ada satu tempat yang memutuskan "workspace ini boleh apa".
  */
 

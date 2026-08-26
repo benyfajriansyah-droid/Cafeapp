@@ -1,13 +1,13 @@
 /**
  * Penyimpanan kata sandi.
  *
- * PBKDF2-SHA256 lewat WebCrypto — satu-satunya KDF lambat yang tersedia di Cloudflare Workers
- * tanpa membawa WASM. Jumlah iterasi ikut ditulis di dalam string hash, jadi bisa dinaikkan
- * kapan pun: kata sandi lama tetap bisa diverifikasi dengan iterasi lamanya, lalu ditulis ulang
- * memakai yang baru saat pemiliknya berhasil masuk.
+ * PBKDF2-SHA256 lewat WebCrypto, tersedia di semua runtime tanpa dependensi tambahan.
+ * Jumlah iterasi ikut ditulis di dalam string hash, jadi bisa dinaikkan kapan pun: kata sandi
+ * lama tetap bisa diverifikasi dengan iterasi lamanya, lalu ditulis ulang memakai yang baru
+ * saat pemiliknya berhasil masuk.
  *
- * 210.000 iterasi ≈ 32 ms CPU. Itu di bawah batas Workers berbayar, tapi DI ATAS batas 10 ms
- * paket gratis — masuk dan daftar akan gagal di paket gratis. Lihat catatan di README.
+ * 210.000 iterasi ≈ 32 ms CPU per permintaan masuk atau daftar — angka yang disarankan OWASP
+ * untuk PBKDF2-SHA256, dan tidak terasa di antara jalan-pergi ke database.
  */
 
 const ALGORITHM = "pbkdf2";

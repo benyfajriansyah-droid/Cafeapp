@@ -1,4 +1,3 @@
-import { env } from "cloudflare:workers";
 
 /**
  * Siapa yang boleh memverifikasi pembayaran dan mengaktifkan paket pelanggan.
@@ -11,7 +10,7 @@ import { env } from "cloudflare:workers";
  * aman: lebih baik panel penjualan tidak bisa dibuka daripada bisa dibuka siapa saja.
  */
 export function platformAdminEmails(): string[] {
-  const raw = env.PLATFORM_ADMIN_EMAILS;
+  const raw = process.env.PLATFORM_ADMIN_EMAILS;
   if (typeof raw !== "string") return [];
   return raw.split(",").map((entry) => entry.trim().toLowerCase()).filter((entry) => entry.includes("@"));
 }

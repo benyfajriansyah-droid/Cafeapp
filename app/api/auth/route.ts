@@ -5,7 +5,6 @@
  * pembatasan percobaan — hanya ditulis sekali dan tidak bisa terlewat di salah satu jalur.
  */
 
-import { env } from "cloudflare:workers";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { invitations, members, passwordResets, users, workspaces } from "../../../db/schema";
@@ -314,10 +313,10 @@ function readEmail(value: unknown): string {
  * Tidak boleh diambil dari body permintaan: siapa pun bisa meminta reset untuk email orang
  * lain sambil menyisipkan domainnya sendiri, dan korban menerima email berisi token yang sah
  * menuju situs penyerang. `APP_URL` mengunci nilainya di sisi server; kalau belum diisi,
- * dipakai origin permintaan, yang di Workers dibatasi route yang terdaftar.
+ * dipakai origin permintaan, yang di Vercel dibatasi domain yang terdaftar untuk project ini.
  */
 function appOrigin(request: Request): string {
-  const configured = typeof env.APP_URL === "string" ? env.APP_URL.trim() : "";
+  const configured = typeof process.env.APP_URL === "string" ? process.env.APP_URL.trim() : "";
   if (configured) {
     try {
       return new URL(configured).origin;

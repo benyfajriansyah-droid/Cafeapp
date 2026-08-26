@@ -1,5 +1,4 @@
-import { env } from "cloudflare:workers";
-import { and, desc, eq, gt, gte, inArray, isNull, lte, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNull, lte, ne, sql, type SQL } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { assertSameOrigin, getSessionUser } from "../../lib/auth/session";
 import { INVITATION_LIFETIME_MS, hashToken, isoIn, newLinkToken } from "../../lib/auth/tokens";
@@ -77,7 +76,7 @@ function fail(message: string, status = 400): never {
  * datang lewat host lain.
  */
 function appOrigin(request: Request): string {
-  const configured = typeof env.APP_URL === "string" ? env.APP_URL.trim() : "";
+  const configured = typeof process.env.APP_URL === "string" ? process.env.APP_URL.trim() : "";
   if (configured) {
     try {
       return new URL(configured).origin;
@@ -261,9 +260,13 @@ export async function GET(request: Request) {
       .select({ method: orders.paymentMethod, total: sql<number>`coalesce(sum(${orders.total}), 0)`, count: sql<number>`count(*)` })
       .from(orders).where(orderWhere).groupBy(orders.paymentMethod);
 
+    // `created_at` disimpan sebagai teks ISO 8601, jadi jamnya selalu ada di posisi 12-13
+    // ("2026-08-25T14:05:00.000Z"). Mengambilnya dengan `substring` bekerja apa adanya di
+    // Postgres tanpa perlu mengubah tipe kolom atau menebak zona waktu server.
+    const hourExpression = sql<string>`substring(${orders.createdAt} from 12 for 2)`;
     const hourlySales = await db
-      .select({ hour: sql<string>`strftime('%H', ${orders.createdAt})`, total: sql<number>`coalesce(sum(${orders.total}), 0)` })
-      .from(orders).where(orderWhere).groupBy(sql`strftime('%H', ${orders.createdAt})`).orderBy(sql`strftime('%H', ${orders.createdAt})`);
+      .select({ hour: hourExpression, total: sql<number>`coalesce(sum(${orders.total}), 0)` })
+      .from(orders).where(orderWhere).groupBy(hourExpression).orderBy(hourExpression);
 
     const topProducts = await db
       .select({
@@ -695,7 +698,7 @@ const handlers: Record<string, Handler> = {
     const orderId = id("ord");
     const orderNo = `FZ-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`;
 
-    const statements: BatchItem<"sqlite">[] = [
+    const statements: BatchItem<"pg">[] = [
       db.insert(orders).values({
         id: orderId, workspaceId: workspace.id, branchId: branch.id, orderNo,
         channel: text(body.channel, "Dine in"), paymentMethod: text(body.paymentMethod, "QRIS"),
@@ -757,7 +760,7 @@ const handlers: Record<string, Handler> = {
     const usageRows = await context.db.select().from(stockMovements)
       .where(and(eq(stockMovements.workspaceId, context.workspace.id), eq(stockMovements.type, "usage"), eq(stockMovements.note, order.orderNo)));
 
-    const statements: BatchItem<"sqlite">[] = [
+    const statements: BatchItem<"pg">[] = [
       context.db.update(orders).set({
         status: "void", voidedAt: new Date().toISOString(), voidedBy: context.email, voidReason: reason,
       }).where(eq(orders.id, order.id)),
@@ -897,7 +900,7 @@ const handlers: Record<string, Handler> = {
       })
       .filter((entry): entry is { ingredient: typeof ingredientRows[number]; quantity: number } => Boolean(entry));
 
-    const statements: BatchItem<"sqlite">[] = [
+    const statements: BatchItem<"pg">[] = [
       context.db.delete(recipes).where(and(eq(recipes.workspaceId, context.workspace.id), eq(recipes.productId, product.id))),
     ];
     for (const rows of chunkRows(lines.map((line) => ({
@@ -1169,11 +1172,32 @@ const handlers: Record<string, Handler> = {
  * Utilitas
  * ------------------------------------------------------------------ */
 
-/** Menjalankan beberapa perintah sebagai satu batch D1 supaya tidak tersimpan setengah. */
-async function runBatch(db: Db, statements: BatchItem<"sqlite">[]) {
+/**
+ * Menjalankan beberapa perintah sebagai satu satuan supaya tidak tersimpan setengah.
+ *
+ * Kedua driver mencapainya dengan cara berbeda, dan perbedaan itu tidak boleh bocor ke
+ * pemanggilnya:
+ *
+ * - **Neon (HTTP)** menjalankan isi satu batch di dalam satu transaksi.
+ * - **Postgres lain** memakai transaksi biasa. Perintahnya dijalankan lewat `tx.execute`,
+ *   bukan dengan menunggu query builder-nya langsung — builder terikat ke koneksi asalnya,
+ *   jadi menunggunya di dalam callback transaksi akan menjalankannya DI LUAR transaksi itu
+ *   dan diam-diam menghilangkan seluruh jaminannya.
+ */
+async function runBatch(db: Db, statements: BatchItem<"pg">[]) {
   if (!statements.length) return;
-  const [first, ...rest] = statements;
-  await db.batch([first, ...rest]);
+
+  if ("batch" in db) {
+    const [first, ...rest] = statements;
+    await db.batch([first, ...rest]);
+    return;
+  }
+
+  await db.transaction(async (tx) => {
+    for (const statement of statements) {
+      await tx.execute((statement as unknown as { getSQL(): SQL }).getSQL());
+    }
+  });
 }
 
 type OwnedTable = typeof products | typeof ingredients | typeof expenses | typeof members | typeof branches;
@@ -1186,7 +1210,10 @@ async function findOwned<T extends OwnedTable>(
   label: string,
 ): Promise<T["$inferSelect"]> {
   if (!rowId) fail(`${label} belum dipilih`);
-  const [row] = await context.db.select().from(table)
+  // `from()` di driver Postgres menolak parameter tabel generik karena tidak bisa membuktikan
+  // hasil select-nya tidak kosong. Tabel yang masuk ke sini selalu salah satu dari `OwnedTable`,
+  // dan kolom yang dipakai — `id` dan `workspaceId` — dijamin ada oleh batasan tipe itu.
+  const [row] = await context.db.select().from(table as OwnedTable)
     .where(and(eq(table.id, rowId), eq(table.workspaceId, context.workspace.id)))
     .limit(1);
   if (!row) fail(`${label} tidak ditemukan`, 404);

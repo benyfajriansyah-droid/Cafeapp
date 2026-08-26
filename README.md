@@ -4,33 +4,44 @@ Sistem operasional dan SaaS untuk usaha kopi rumahan, booth, kedai, dan bisnis m
 
 ## Konfigurasi sebelum deploy
 
-Aplikasi ini punya sistem akun sendiri — email dan kata sandi, sesi tersimpan di database, tanpa bergantung pada penyedia hosting mana pun. Bisa dipasang di domain sendiri.
+Aplikasi ini punya sistem akun sendiri — email dan kata sandi, sesi tersimpan di database — dan berjalan sebagai aplikasi Next.js biasa di atas Postgres. Tidak terikat ke satu penyedia hosting mana pun.
 
 | Variabel | Isi | Kalau kosong |
 |---|---|---|
-| `APP_URL` | Alamat publik aplikasi, mis. `https://app.domain-lo.com` | Tautan di email memakai host permintaan; aman di Workers, tapi sebaiknya dikunci |
+| `DATABASE_URL` | Connection string Postgres (Neon) | Aplikasi menolak jalan dengan pesan yang menyebut variabel ini |
+| `APP_URL` | Alamat publik aplikasi, mis. `https://app.domain-lo.com` | Tautan di email memakai host permintaan |
 | `PLATFORM_ADMIN_EMAILS` | Email admin, dipisah koma | Panel **Penjualan SaaS** tidak bisa dibuka siapa pun |
-| `RESEND_API_KEY` | Kunci API Resend (rahasia) | Reset kata sandi tidak terkirim; tautannya hanya masuk ke log server |
+| `RESEND_API_KEY` | Kunci API Resend | Reset kata sandi tidak terkirim; tautannya hanya masuk ke log server |
 | `MAIL_FROM` | Pengirim, mis. `Famz Coffee OS <halo@domain-lo.com>` | Sama seperti di atas |
 
-Yang rahasia dipasang lewat `npx wrangler secret put RESEND_API_KEY -c wrangler.deploy.jsonc`, bukan ditulis di berkas konfigurasi.
+Contoh lengkapnya ada di [`.env.example`](.env.example).
 
 **`PLATFORM_ADMIN_EMAILS` sengaja tanpa nilai bawaan.** Kalau kosong, tidak ada seorang pun yang jadi admin. Lebih baik panel penjualan tidak bisa dibuka daripada bisa dibuka siapa saja.
 
-**Kata sandi butuh Workers berbayar.** Masuk dan daftar memakai PBKDF2 210.000 iterasi (±32 ms CPU per permintaan). Itu melewati batas 10 ms paket Workers gratis. Jumlah iterasi tersimpan di dalam setiap hash, jadi bisa dinaikkan kapan pun tanpa membatalkan kata sandi yang sudah ada.
+## Deploy ke Vercel
 
-## Deploy ke Cloudflare sendiri
+1. **Buat database.** Di dashboard Vercel: Storage → Neon → Create. `DATABASE_URL` terisi otomatis ke project. (Bisa juga pakai Neon langsung, Supabase, atau Postgres mana pun — tinggal isi `DATABASE_URL` manual.)
+2. **Import repositori** ini di Vercel. Framework terdeteksi sebagai Next.js; tidak ada setelan build yang perlu diubah.
+3. **Isi environment variable** sisanya di Project Settings → Environment Variables.
+4. **Terapkan migrasi** sekali dari mesin lo:
+
+   ```bash
+   echo 'DATABASE_URL=...' > .env.local
+   node --env-file=.env.local scripts/migrate.mjs
+   ```
+
+Deploy berikutnya cukup `git push` — Vercel yang membangun dan merilis. Jalankan `npm run db:migrate` lagi setiap kali ada berkas migrasi baru.
+
+### Menjalankan di lokal
 
 ```bash
-npx wrangler d1 create famz-coffee-os
-# salin database_id ke wrangler.deploy.jsonc, lalu:
-npx wrangler d1 migrations apply famz-coffee-os --remote -c wrangler.deploy.jsonc
-npx wrangler secret put RESEND_API_KEY -c wrangler.deploy.jsonc
-npm run build
-npx wrangler deploy -c wrangler.deploy.jsonc
+npm install
+cp .env.example .env.local     # isi DATABASE_URL dari Neon
+npm run db:migrate             # sekali, untuk menyiapkan tabel
+npm run dev                    # http://localhost:3000
 ```
 
-Berkasnya sengaja bernama `wrangler.deploy.jsonc`, bukan `wrangler.jsonc`: `npm run dev` memakai konfigurasi Worker-nya sendiri lewat plugin Vite, dan kalau ada `wrangler.jsonc` di akar proyek keduanya bergabung lalu bentrok.
+Neon punya free tier yang cukup untuk pengembangan, jadi database lokal dan produksi memakai mesin yang sama. Buat branch database terpisah di Neon kalau tidak mau data dev tercampur.
 
 ## Akun dan akses
 
@@ -84,9 +95,9 @@ Memilih paket di dalam aplikasi hanya membuat tagihan — tidak pernah memberi h
 
 ## Teknologi
 
-- Vinext / React 19 / TypeScript
+- Next.js 16 / React 19 / TypeScript
 - Tailwind CSS
-- Cloudflare Workers dan D1
+- Vercel dan Postgres (Neon)
 - Drizzle ORM
 - Autentikasi mandiri: kata sandi PBKDF2 dan sesi berbasis cookie
 
@@ -104,14 +115,13 @@ Perintah penting:
 ```bash
 npm run lint       # eslint
 npm run typecheck  # tsc --noEmit
-npm run build      # build terbatas waktu
-npm test           # uji logika + migrasi
-npm run test:build # build dulu, lalu seluruh uji termasuk hasil build
-npm run db:generate
-npm run db:migrate:local  # terapkan migrasi ke D1 lokal (dev)
+npm run build      # next build
+npm test           # uji logika, autentikasi, dan migrasi
+npm run db:generate  # bikin berkas migrasi dari perubahan skema
+npm run db:migrate   # terapkan migrasi ke DATABASE_URL
 ```
 
-Migrasi database ada di `drizzle/` dan diterapkan berurutan. `npm test` menjalankan seluruh migrasi ke SQLite sungguhan dan memeriksa data lama tetap utuh.
+Migrasi database ada di `drizzle/` dan diterapkan berurutan. `npm test` menjalankan seluruh migrasi ke Postgres sungguhan (PGlite, berjalan di dalam proses) lalu memeriksa tipe kolom dan batasan uniknya.
 
 ## Struktur utama
 
@@ -132,16 +142,15 @@ app/
     auth/mail.ts        Pengiriman email opsional lewat Resend
     plans.ts            Paket, batas, dan hak akses langganan
     money.ts            Hitungan pesanan, pajak, diskon, laba
-    chunk.ts            Pemecah insert agar tidak melewati batas parameter D1
+    chunk.ts            Pemecah insert agar tidak melewati batas parameter database
     platform.ts         Admin platform dan sanitasi pesan error
     reference.ts        Kode checkout OrderHero
   api/auth/route.ts     Daftar, masuk, keluar, reset, terima undangan
   api/app/route.ts      API dan pemeriksaan hak akses
 db/schema.ts            Skema data multi-tenant
 drizzle/                Migrasi database
-scripts/migrate-local.mjs  Menerapkan migrasi ke D1 lokal saat pengembangan
-tests/                  Uji logika, autentikasi, batas D1, dan migrasi
-wrangler.deploy.jsonc   Konfigurasi deploy ke Cloudflare sendiri
+scripts/migrate.mjs     Menerapkan migrasi ke Postgres yang ditunjuk DATABASE_URL
+tests/                  Uji logika, autentikasi, batas insert, dan migrasi
 ```
 
 ## Keamanan data

@@ -1,17 +1,27 @@
 import { sql } from "drizzle-orm";
-import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { boolean, doublePrecision, index, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
+
+/**
+ * Waktu dicatat sebagai teks ISO 8601 UTC, bukan tipe timestamp.
+ *
+ * `CURRENT_TIMESTAMP` Postgres menghasilkan "2026-08-25 03:34:39.25+00" — beda format dari
+ * ISO 8601 yang dipakai di seluruh aplikasi. Perbedaan itu diam-diam merusak tiga hal
+ * sekaligus: perbandingan rentang tanggal yang mengandalkan urutan leksikografis, pengambilan
+ * jam untuk grafik penjualan, dan `new Date()` di browser.
+ */
+const NOW_ISO = sql`to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 
 // Nominal uang disimpan sebagai `integer` rupiah penuh — rupiah tidak punya sen dan
-// penjumlahan floating point mengakumulasi galat di laporan keuangan. Yang tetap `real`
-// hanya besaran fisik (jumlah bahan) dan harga per satuan, karena keduanya memang pecahan.
+// penjumlahan floating point mengakumulasi galat di laporan keuangan. Yang tetap pecahan
+// (`doublePrecision`) hanya besaran fisik bahan dan harga per satuan.
 
-export const workspaces = sqliteTable("workspaces", {
+export const workspaces = pgTable("workspaces", {
   id: text("id").primaryKey(), ownerEmail: text("owner_email").notNull().unique(),
   name: text("name").notNull(), slug: text("slug").notNull(),
   plan: text("plan").notNull().default("trial"), currency: text("currency").notNull().default("IDR"),
-  taxPercent: real("tax_percent").notNull().default(0),
+  taxPercent: doublePrecision("tax_percent").notNull().default(0),
   phone: text("phone").notNull().default(""), businessType: text("business_type").notNull().default("coffee-home"),
-  onboardingCompleted: integer("onboarding_completed", { mode: "boolean" }).notNull().default(true),
+  onboardingCompleted: boolean("onboarding_completed").notNull().default(true),
   subscriptionStatus: text("subscription_status").notNull().default("trialing"),
   trialEndsAt: text("trial_ends_at"), billingInterval: text("billing_interval").notNull().default("monthly"),
   // `plan` di atas adalah paket yang dipilih pengguna. `paidPlan` adalah paket yang benar-benar
@@ -19,128 +29,128 @@ export const workspaces = sqliteTable("workspaces", {
   paidPlan: text("paid_plan").notNull().default(""),
   currentPeriodEnd: text("current_period_end"),
   cashierDiscountPercent: integer("cashier_discount_percent").notNull().default(0),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").notNull().default(NOW_ISO),
 });
 
-export const branches = sqliteTable("branches", {
+export const branches = pgTable("branches", {
   id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(),
   name: text("name").notNull(), code: text("code").notNull(), address: text("address").notNull().default(""),
-  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
-  isDemo: integer("is_demo", { mode: "boolean" }).notNull().default(false),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  isActive: boolean("is_active").notNull().default(true),
+  isDemo: boolean("is_demo").notNull().default(false),
+  createdAt: text("created_at").notNull().default(NOW_ISO),
 }, (table) => [index("branches_workspace_idx").on(table.workspaceId)]);
 
-export const products = sqliteTable("products", {
+export const products = pgTable("products", {
   id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), name: text("name").notNull(),
   sku: text("sku").notNull(), category: text("category").notNull(), price: integer("price").notNull(),
-  cost: integer("cost").notNull().default(0), isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
-  isDemo: integer("is_demo", { mode: "boolean" }).notNull().default(false),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  cost: integer("cost").notNull().default(0), isActive: boolean("is_active").notNull().default(true),
+  isDemo: boolean("is_demo").notNull().default(false),
+  createdAt: text("created_at").notNull().default(NOW_ISO),
 }, (table) => [index("products_workspace_idx").on(table.workspaceId)]);
 
-export const ingredients = sqliteTable("ingredients", {
+export const ingredients = pgTable("ingredients", {
   id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), name: text("name").notNull(),
-  unit: text("unit").notNull(), stockQty: real("stock_qty").notNull().default(0),
-  minimumStock: real("minimum_stock").notNull().default(0), averageCost: real("average_cost").notNull().default(0),
+  unit: text("unit").notNull(), stockQty: doublePrecision("stock_qty").notNull().default(0),
+  minimumStock: doublePrecision("minimum_stock").notNull().default(0), averageCost: doublePrecision("average_cost").notNull().default(0),
   supplier: text("supplier").notNull().default(""),
-  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
-  isDemo: integer("is_demo", { mode: "boolean" }).notNull().default(false),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  isActive: boolean("is_active").notNull().default(true),
+  isDemo: boolean("is_demo").notNull().default(false),
+  createdAt: text("created_at").notNull().default(NOW_ISO),
 }, (table) => [index("ingredients_workspace_idx").on(table.workspaceId)]);
 
-export const recipes = sqliteTable("recipes", {
+export const recipes = pgTable("recipes", {
   id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), productId: text("product_id").notNull(),
-  ingredientId: text("ingredient_id").notNull(), quantity: real("quantity").notNull(),
+  ingredientId: text("ingredient_id").notNull(), quantity: doublePrecision("quantity").notNull(),
 }, (table) => [
   index("recipes_product_idx").on(table.productId),
   uniqueIndex("recipes_product_ingredient_unique").on(table.productId, table.ingredientId),
 ]);
 
-export const orders = sqliteTable("orders", {
+export const orders = pgTable("orders", {
   id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), branchId: text("branch_id").notNull(),
   orderNo: text("order_no").notNull(), channel: text("channel").notNull().default("Dine in"),
   paymentMethod: text("payment_method").notNull(), subtotal: integer("subtotal").notNull(),
   discount: integer("discount").notNull().default(0), tax: integer("tax").notNull().default(0),
   total: integer("total").notNull(),
-  status: text("status").notNull().default("paid"), createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  status: text("status").notNull().default("paid"), createdAt: text("created_at").notNull().default(NOW_ISO),
   customerName: text("customer_name").notNull().default(""), customerPhone: text("customer_phone").notNull().default(""),
   notes: text("notes").notNull().default(""),
   // Jejak siapa yang menjual dan siapa yang membatalkan — diperlukan untuk menelusuri diskon dan void.
   cashierEmail: text("cashier_email").notNull().default(""),
   voidedAt: text("voided_at"), voidedBy: text("voided_by").notNull().default(""),
   voidReason: text("void_reason").notNull().default(""),
-  isDemo: integer("is_demo", { mode: "boolean" }).notNull().default(false),
+  isDemo: boolean("is_demo").notNull().default(false),
 }, (table) => [
   index("orders_workspace_created_idx").on(table.workspaceId, table.createdAt),
   index("orders_branch_created_idx").on(table.branchId, table.createdAt),
 ]);
 
-export const orderItems = sqliteTable("order_items", {
+export const orderItems = pgTable("order_items", {
   id: text("id").primaryKey(), orderId: text("order_id").notNull(), productId: text("product_id").notNull(),
-  productName: text("product_name").notNull(), quantity: real("quantity").notNull(),
+  productName: text("product_name").notNull(), quantity: doublePrecision("quantity").notNull(),
   unitPrice: integer("unit_price").notNull(), unitCost: integer("unit_cost").notNull().default(0),
   subtotal: integer("subtotal").notNull(),
 }, (table) => [index("order_items_order_idx").on(table.orderId)]);
 
-export const expenses = sqliteTable("expenses", {
+export const expenses = pgTable("expenses", {
   id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), branchId: text("branch_id").notNull(),
   category: text("category").notNull(), amount: integer("amount").notNull(), paymentMethod: text("payment_method").notNull(),
   note: text("note").notNull().default(""), transactionDate: text("transaction_date").notNull(),
-  isDemo: integer("is_demo", { mode: "boolean" }).notNull().default(false),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  isDemo: boolean("is_demo").notNull().default(false),
+  createdAt: text("created_at").notNull().default(NOW_ISO),
 }, (table) => [
   index("expenses_workspace_date_idx").on(table.workspaceId, table.transactionDate),
   index("expenses_branch_date_idx").on(table.branchId, table.transactionDate),
 ]);
 
-export const stockMovements = sqliteTable("stock_movements", {
+export const stockMovements = pgTable("stock_movements", {
   id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), branchId: text("branch_id").notNull(),
-  ingredientId: text("ingredient_id").notNull(), type: text("type").notNull(), quantity: real("quantity").notNull(),
-  unitCost: real("unit_cost").notNull().default(0), supplier: text("supplier").notNull().default(""),
+  ingredientId: text("ingredient_id").notNull(), type: text("type").notNull(), quantity: doublePrecision("quantity").notNull(),
+  unitCost: doublePrecision("unit_cost").notNull().default(0), supplier: text("supplier").notNull().default(""),
   note: text("note").notNull().default(""),
-  isDemo: integer("is_demo", { mode: "boolean" }).notNull().default(false),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  isDemo: boolean("is_demo").notNull().default(false),
+  createdAt: text("created_at").notNull().default(NOW_ISO),
 }, (table) => [index("stock_movements_workspace_idx").on(table.workspaceId, table.createdAt)]);
 
-export const shifts = sqliteTable("shifts", {
+export const shifts = pgTable("shifts", {
   id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), branchId: text("branch_id").notNull(),
   cashierName: text("cashier_name").notNull(), openingCash: integer("opening_cash").notNull().default(0),
   actualCash: integer("actual_cash"), expectedCash: integer("expected_cash"), variance: integer("variance"),
   status: text("status").notNull().default("open"),
   openedBy: text("opened_by").notNull().default(""), closedBy: text("closed_by").notNull().default(""),
   note: text("note").notNull().default(""),
-  isDemo: integer("is_demo", { mode: "boolean" }).notNull().default(false),
-  openedAt: text("opened_at").notNull().default(sql`CURRENT_TIMESTAMP`), closedAt: text("closed_at"),
+  isDemo: boolean("is_demo").notNull().default(false),
+  openedAt: text("opened_at").notNull().default(NOW_ISO), closedAt: text("closed_at"),
 }, (table) => [
   index("shifts_workspace_idx").on(table.workspaceId, table.openedAt),
   index("shifts_branch_status_idx").on(table.branchId, table.status),
 ]);
 
-export const members = sqliteTable("members", {
+export const members = pgTable("members", {
   id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), email: text("email").notNull(),
   name: text("name").notNull().default(""), role: text("role").notNull().default("cashier"),
   status: text("status").notNull().default("active"), invitedBy: text("invited_by").notNull().default(""),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").notNull().default(NOW_ISO),
 }, (table) => [
   uniqueIndex("members_workspace_email_unique").on(table.workspaceId, table.email),
   index("members_email_idx").on(table.email),
 ]);
 
-export const billingInvoices = sqliteTable("billing_invoices", {
+export const billingInvoices = pgTable("billing_invoices", {
   id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), invoiceNo: text("invoice_no").notNull(),
   plan: text("plan").notNull(), interval: text("interval").notNull().default("monthly"), amount: integer("amount").notNull(),
   status: text("status").notNull().default("pending"), dueDate: text("due_date").notNull(), paidAt: text("paid_at"),
   paymentMethod: text("payment_method").notNull().default("manual"),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").notNull().default(NOW_ISO),
 }, (table) => [index("billing_workspace_idx").on(table.workspaceId, table.createdAt)]);
 
-export const platformSettings = sqliteTable("platform_settings", {
+export const platformSettings = pgTable("platform_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull().default(""),
-  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(NOW_ISO),
 });
 
-export const subscriptionClaims = sqliteTable("subscription_claims", {
+export const subscriptionClaims = pgTable("subscription_claims", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id"),
   checkoutReference: text("checkout_reference").notNull().unique(),
@@ -154,7 +164,7 @@ export const subscriptionClaims = sqliteTable("subscription_claims", {
   status: text("status").notNull().default("checkout_started"),
   reviewerEmail: text("reviewer_email").notNull().default(""),
   reviewNote: text("review_note").notNull().default(""),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").notNull().default(NOW_ISO),
   reviewedAt: text("reviewed_at"),
   activatedAt: text("activated_at"),
 }, (table) => [
@@ -170,7 +180,7 @@ export const subscriptionClaims = sqliteTable("subscription_claims", {
 // jadi bisa dipasang di domain mana pun tanpa bergantung pada satu penyedia hosting.
 // ---------------------------------------------------------------------------
 
-export const users = sqliteTable("users", {
+export const users = pgTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull().unique(),
   // Format: pbkdf2$sha256$<iterasi>$<salt_b64url>$<hash_b64url>. Jumlah iterasi ikut disimpan
@@ -182,31 +192,31 @@ export const users = sqliteTable("users", {
   failedAttempts: integer("failed_attempts").notNull().default(0),
   lockedUntil: text("locked_until"),
   lastLoginAt: text("last_login_at"),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").notNull().default(NOW_ISO),
 }, (table) => [index("users_email_idx").on(table.email)]);
 
-export const sessions = sqliteTable("sessions", {
+export const sessions = pgTable("sessions", {
   // Yang disimpan adalah SHA-256 dari token, bukan tokennya. Salinan database yang bocor
   // tidak bisa dipakai untuk menyamar jadi siapa pun.
   tokenHash: text("token_hash").primaryKey(),
   userId: text("user_id").notNull(),
   expiresAt: text("expires_at").notNull(),
-  lastSeenAt: text("last_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  lastSeenAt: text("last_seen_at").notNull().default(NOW_ISO),
+  createdAt: text("created_at").notNull().default(NOW_ISO),
 }, (table) => [
   index("sessions_user_idx").on(table.userId),
   index("sessions_expires_idx").on(table.expiresAt),
 ]);
 
-export const passwordResets = sqliteTable("password_resets", {
+export const passwordResets = pgTable("password_resets", {
   tokenHash: text("token_hash").primaryKey(),
   userId: text("user_id").notNull(),
   expiresAt: text("expires_at").notNull(),
   usedAt: text("used_at"),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").notNull().default(NOW_ISO),
 }, (table) => [index("password_resets_user_idx").on(table.userId)]);
 
-export const invitations = sqliteTable("invitations", {
+export const invitations = pgTable("invitations", {
   tokenHash: text("token_hash").primaryKey(),
   workspaceId: text("workspace_id").notNull(),
   email: text("email").notNull(),
@@ -216,7 +226,7 @@ export const invitations = sqliteTable("invitations", {
   expiresAt: text("expires_at").notNull(),
   acceptedAt: text("accepted_at"),
   revokedAt: text("revoked_at"),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").notNull().default(NOW_ISO),
 }, (table) => [
   index("invitations_workspace_idx").on(table.workspaceId, table.createdAt),
   index("invitations_email_idx").on(table.email),

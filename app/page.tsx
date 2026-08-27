@@ -1,11 +1,11 @@
 import { ArrowRight, BarChart3, Boxes, Check, Coffee, CreditCard, ReceiptText, ShieldCheck, Sparkles, Store, UsersRound } from "lucide-react";
-import { chatGPTSignInPath, getChatGPTUser } from "./chatgpt-auth";
+import { getSessionUser, signInPath } from "./lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const user = await getChatGPTUser();
-  const appLink = user ? "/app" : chatGPTSignInPath("/app");
+  const user = await getSessionUser();
+  const appLink = user ? "/app" : signInPath("/app");
   return (
     <main className="landing-shell">
       <nav className="landing-nav">

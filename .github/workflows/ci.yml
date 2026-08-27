@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Deploy yang rusak langsung kena pelanggan yang bayar, jadi lint, typecheck, build,
+# dan test dijalankan untuk setiap perubahan — bukan hanya kalau ada yang ingat.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: npm
+
+      - name: Pasang dependency
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Nilai sentinel: build tidak pernah menghubungi database, tapi `next build` menjalankan
+      # kode modul, dan pemeriksa DATABASE_URL akan melempar kalau variabelnya kosong.
+      - name: Build
+        run: npm run build
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+
+      # Termasuk uji migrasi, yang menerapkan seluruh berkas drizzle ke Postgres sungguhan
+      # (PGlite, berjalan di dalam proses) dan memeriksa tipe kolom serta batasan uniknya.
+      - name: Test
+        run: npm test

@@ -1,55 +1,27 @@
 "use client";
 
 import {
-  ArrowDownRight,
-  ArrowUpRight,
-  BadgeDollarSign,
-  BarChart3,
-  Bell,
-  Boxes,
-  Building2,
-  CalendarDays,
-  ChevronDown,
-  CircleAlert,
-  ClipboardList,
-  Coffee,
-  CreditCard,
-  LayoutDashboard,
-  Menu,
-  PackagePlus,
-  ReceiptText,
-  Search,
-  Settings,
-  ShoppingCart,
-  Store,
-  UsersRound,
-  WalletCards,
-  X,
+  BadgeDollarSign, BarChart3, Boxes, Building2, Check, CircleAlert, ClipboardList, Coffee,
+  LayoutDashboard, LogOut, Menu, PackagePlus, Plus, ReceiptText, RefreshCw, Settings as SettingsIcon,
+  ShoppingCart, UserPlus, UsersRound, WalletCards, X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import ModulePage from "./module-page";
+import { useState } from "react";
 
-type DashboardData = {
-  workspace: { onboardingCompleted: boolean };
-  platformAdmin: boolean;
-  products: Array<{ id: string; name: string; category: string; price: number; cost: number }>;
-  ingredients: Array<{ id: string; name: string; stockQty: number; minimumStock: number; unit: string }>;
-  orders: Array<{ id: string; total: number }>;
-  orderItems: Array<{ productId: string; quantity: number; subtotal: number; unitCost: number }>;
-  expenses: Array<{ amount: number }>;
-};
+import Dashboard from "./modules/dashboard";
+import Expenses from "./modules/expenses";
+import Inventory, { Purchases } from "./modules/inventory";
+import Pos, { StockWarnings } from "./modules/pos";
+import Products from "./modules/products";
+import Reports from "./modules/reports";
+import SaasAdmin from "./modules/saas-admin";
+import Shifts from "./modules/shifts";
+import Transactions from "./modules/transactions";
+import { Branches, PlanPicker, Settings, Team } from "./modules/business";
+import { LockedScreen, Onboarding } from "./modules/onboarding";
+import { canManage, canSell, canStock, isOwner, money, type ModuleProps, type Receipt } from "./modules/shared";
+import { useAppData } from "./modules/use-app-data";
 
-const rupiah = new Intl.NumberFormat("id-ID", {
-  style: "currency",
-  currency: "IDR",
-  maximumFractionDigits: 0,
-});
-
-function numberFormat(value: number) {
-  return new Intl.NumberFormat("id-ID", { maximumFractionDigits: 1 }).format(value);
-}
-
-const nav = [
+const operations = [
   { label: "Ringkasan", icon: LayoutDashboard },
   { label: "Kasir", icon: ShoppingCart },
   { label: "Transaksi", icon: ReceiptText },
@@ -61,218 +33,272 @@ const nav = [
   { label: "Laporan", icon: BarChart3 },
 ];
 
-const sales = [32, 44, 39, 58, 51, 72, 65, 88, 74, 93, 81, 97, 84, 112];
-
-const topProducts = [
-  { name: "Kopi Susu Famz", category: "Coffee", sold: 63, revenue: 1134000, color: "#c96f45" },
-  { name: "Americano Aren", category: "Coffee", sold: 41, revenue: 615000, color: "#426b5a" },
-  { name: "Matcha Cream", category: "Non Coffee", sold: 28, revenue: 560000, color: "#8d9c6d" },
-  { name: "Croissant Butter", category: "Pastry", sold: 21, revenue: 378000, color: "#d6a552" },
+const business = [
+  { label: "Cabang", icon: Building2 },
+  { label: "Tim & Akses", icon: UsersRound },
+  { label: "Pengaturan", icon: SettingsIcon },
 ];
-
-const lowStock = [
-  { name: "Fresh milk", remaining: "3,5 L", percent: 18, status: "Kritis" },
-  { name: "Biji kopi house blend", remaining: "1,2 kg", percent: 24, status: "Rendah" },
-  { name: "Cup 16 oz", remaining: "42 pcs", percent: 28, status: "Rendah" },
-];
-
-const activities = [
-  { title: "Shift pagi dibuka", meta: "Raka · 07.02", icon: Store },
-  { title: "Penjualan #FZ-0842", meta: "QRIS · Rp57.000 · 10.36", icon: CreditCard },
-  { title: "Stok fresh milk berkurang", meta: "Otomatis dari 2 produk · 10.36", icon: Boxes },
-  { title: "Biaya operasional dicatat", meta: "Gas LPG · Rp23.000 · 09.18", icon: WalletCards },
-];
-
-function KpiCard({ label, value, helper, trend, icon: Icon, tone }: {
-  label: string; value: string; helper: string; trend?: "up" | "down";
-  icon: typeof BadgeDollarSign; tone: string;
-}) {
-  return (
-    <article className="kpi-card">
-      <div className="kpi-top">
-        <span className="kpi-label">{label}</span>
-        <span className="icon-box" style={{ background: tone }}><Icon size={19} /></span>
-      </div>
-      <strong>{value}</strong>
-      <div className="kpi-helper">
-        {trend === "up" && <span className="trend positive"><ArrowUpRight size={14} />12,4%</span>}
-        {trend === "down" && <span className="trend negative"><ArrowDownRight size={14} />3,1%</span>}
-        <span>{helper}</span>
-      </div>
-    </article>
-  );
-}
 
 export default function CoffeeApp({ userName }: { userName: string }) {
+  const app = useAppData();
   const [active, setActive] = useState("Ringkasan");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [modal, setModal] = useState<"product" | "ingredient" | "restock" | "expense" | "member" | "branch" | "shift" | "plan" | null>(null);
+  const [receipt, setReceipt] = useState<Receipt | null>(null);
 
-  useEffect(() => {
-    const timer = window.setTimeout(async () => {
-      try {
-        const response = await fetch("/api/app", { cache: "no-store" });
-        if (response.ok) setDashboard(await response.json() as DashboardData);
-      } catch { /* Dashboard tetap menampilkan data contoh saat jaringan belum siap. */ }
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
+  const { data, loading, saving, error, toast, submit, reload, setRange, branchId, setBranchId } = app;
 
-  const dashboardSales = dashboard?.orders.reduce((sum, order) => sum + order.total, 0) ?? 8452000;
-  const dashboardCogs = dashboard?.orderItems.reduce((sum, item) => sum + item.unitCost * item.quantity, 0) ?? 2704000;
-  const dashboardExpenses = dashboard?.expenses.reduce((sum, item) => sum + item.amount, 0) ?? 687000;
-  const displayProducts = dashboard ? dashboard.products.map((product, index) => {
-    const items = dashboard.orderItems.filter((item) => item.productId === product.id);
-    return { name: product.name, category: product.category, sold: items.reduce((sum, item) => sum + item.quantity, 0), revenue: items.reduce((sum, item) => sum + item.subtotal, 0), color: ["#c96f45", "#426b5a", "#8d9c6d", "#d6a552"][index % 4] };
-  }).sort((a, b) => b.sold - a.sold).slice(0, 4) : topProducts;
-  const displayLowStock = dashboard ? dashboard.ingredients.filter((item) => item.stockQty <= item.minimumStock).slice(0, 3).map((item) => ({ name: item.name, remaining: `${numberFormat(item.stockQty)} ${item.unit}`, percent: Math.max(5, Math.min(100, item.minimumStock ? item.stockQty / item.minimumStock * 100 : 100)), status: item.stockQty <= item.minimumStock * .4 ? "Kritis" : "Rendah" })) : lowStock;
+  if (loading && !data) {
+    return <div className="module-loading"><span /><p>Menyiapkan operasional kedai…</p></div>;
+  }
+  if (!data) {
+    return (
+      <div className="module-error">
+        <CircleAlert size={28} />
+        <b>Belum bisa memuat data</b>
+        <p>{error || "Coba muat ulang halaman."}</p>
+        <button type="button" onClick={() => void reload()}><RefreshCw size={15} /> Coba lagi</button>
+      </div>
+    );
+  }
 
-  if (dashboard && !dashboard.workspace.onboardingCompleted) return <ModulePage active="Ringkasan" />;
+  if (!data.workspace.onboardingCompleted) {
+    return <Onboarding data={data} saving={saving} onComplete={(payload) => submit("complete-onboarding", payload)} />;
+  }
+
+  const moduleProps: ModuleProps = { data, saving, submit, reload, setRange };
+
+  if (data.entitlement.locked) {
+    return (
+      <>
+        <LockedScreen data={data} onManagePlan={() => setModal("plan")} />
+        {modal === "plan" && <PlanPicker {...moduleProps} onClose={() => setModal(null)} />}
+        {toast && <div className="toast"><Check size={16} />{toast}</div>}
+        {error && <div className="toast error"><CircleAlert size={16} />{error}</div>}
+      </>
+    );
+  }
+
+  const activeShift = data.shifts.find((shift) => shift.status === "open");
+  const activeBranch = data.branches.find((branch) => branch.id === data.activeBranchId);
+  const go = (module: string) => { setActive(module); setSidebarOpen(false); };
+
+  /** Tombol aksi utama tiap modul — hanya muncul kalau peran ini memang boleh melakukannya. */
+  const primaryAction = (() => {
+    if (active === "Produk & Resep" && canManage(data)) return { label: "Produk baru", icon: Plus, onClick: () => setModal("product") };
+    if (active === "Stok Bahan" && canStock(data)) return { label: "Bahan baru", icon: Plus, onClick: () => setModal("ingredient") };
+    if (active === "Pembelian" && canStock(data)) return { label: "Stok masuk", icon: PackagePlus, onClick: () => setModal("restock") };
+    if (active === "Biaya" && canManage(data)) return { label: "Catat biaya", icon: Plus, onClick: () => setModal("expense") };
+    if (active === "Shift Kas" && canSell(data)) return { label: activeShift ? "Tutup shift" : "Buka shift", icon: Check, onClick: () => setModal("shift") };
+    if (active === "Cabang" && isOwner(data)) return { label: "Tambah outlet", icon: Plus, onClick: () => setModal("branch") };
+    if (active === "Tim & Akses" && canManage(data)) return { label: "Tambah anggota", icon: UserPlus, onClick: () => setModal("member") };
+    return null;
+  })();
+
+  const headings: Record<string, { title: string; subtitle: string }> = {
+    Kasir: { title: "Kasir", subtitle: "Pilih menu, terima pembayaran, cetak struk" },
+    Transaksi: { title: "Transaksi", subtitle: "Riwayat penjualan outlet ini" },
+    "Produk & Resep": { title: "Produk & Resep", subtitle: "Menu, HPP, dan komposisi bahan" },
+    "Stok Bahan": { title: "Stok Bahan", subtitle: "Persediaan dan batas minimum" },
+    Pembelian: { title: "Pembelian", subtitle: "Riwayat stok masuk dan supplier" },
+    Biaya: { title: "Biaya", subtitle: "Pengeluaran operasional" },
+    "Shift Kas": { title: "Shift Kas", subtitle: "Rekonsiliasi kas per outlet" },
+    Laporan: { title: "Laporan", subtitle: "Penjualan, HPP, dan laba" },
+    Cabang: { title: "Cabang", subtitle: "Outlet dan batas paket" },
+    "Tim & Akses": { title: "Tim & Akses", subtitle: "Anggota dan hak akses" },
+    Pengaturan: { title: "Pengaturan", subtitle: "Identitas bisnis dan langganan" },
+    "Penjualan SaaS": { title: "Penjualan SaaS", subtitle: "Checkout dan aktivasi pelanggan" },
+  };
 
   return (
     <div className="app-shell">
       {sidebarOpen && <button className="sidebar-scrim" aria-label="Tutup menu" onClick={() => setSidebarOpen(false)} />}
+
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="brand-row">
           <div className="brand-mark"><Coffee size={22} strokeWidth={2.4} /></div>
-          <div><strong>Famz Coffee</strong><span>OPERATING SYSTEM</span></div>
+          <div><strong>{data.workspace.name}</strong><span>OPERATING SYSTEM</span></div>
           <button className="close-sidebar" aria-label="Tutup menu" onClick={() => setSidebarOpen(false)}><X size={20} /></button>
         </div>
 
+        {/* Pemilih outlet: transaksi, stok, biaya, dan shift ditulis ke outlet yang dipilih di sini. */}
         <div className="store-switcher">
-          <span className="store-avatar">FC</span>
-          <div><b>Famz Coffee</b><small>Outlet Utama</small></div>
-          <ChevronDown size={16} />
+          <span className="store-avatar">{(activeBranch?.name ?? "O").slice(0, 2).toUpperCase()}</span>
+          <label>
+            <span className="visually-hidden">Pilih outlet</span>
+            <select value={branchId || data.activeBranchId} onChange={(event) => setBranchId(event.target.value)}>
+              {data.branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>{branch.name}{branch.isActive ? "" : " (nonaktif)"}</option>
+              ))}
+              {data.branches.length > 1 && <option value="all">Semua outlet (khusus laporan)</option>}
+            </select>
+          </label>
         </div>
 
         <nav className="side-nav" aria-label="Navigasi utama">
           <span className="nav-eyebrow">OPERASIONAL</span>
-          {nav.map((item) => {
+          {operations.map((item) => {
             const Icon = item.icon;
             return (
-              <button key={item.label} className={active === item.label ? "active" : ""} onClick={() => { setActive(item.label); setSidebarOpen(false); }}>
+              <button key={item.label} className={active === item.label ? "active" : ""} onClick={() => go(item.label)}>
                 <Icon size={18} />{item.label}
               </button>
             );
           })}
           <span className="nav-eyebrow business-label">BISNIS</span>
-          <button className={active === "Cabang" ? "active" : ""} onClick={() => { setActive("Cabang"); setSidebarOpen(false); }}><Building2 size={18} />Cabang</button>
-          <button className={active === "Tim & Akses" ? "active" : ""} onClick={() => { setActive("Tim & Akses"); setSidebarOpen(false); }}><UsersRound size={18} />Tim & Akses</button>
-          <button className={active === "Pengaturan" ? "active" : ""} onClick={() => { setActive("Pengaturan"); setSidebarOpen(false); }}><Settings size={18} />Pengaturan</button>
-          {dashboard?.platformAdmin && <button className={active === "Penjualan SaaS" ? "active" : ""} onClick={() => { setActive("Penjualan SaaS"); setSidebarOpen(false); }}><BadgeDollarSign size={18} />Penjualan SaaS</button>}
+          {business.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.label} className={active === item.label ? "active" : ""} onClick={() => go(item.label)}>
+                <Icon size={18} />{item.label}
+              </button>
+            );
+          })}
+          {data.platformAdmin && (
+            <button className={active === "Penjualan SaaS" ? "active" : ""} onClick={() => go("Penjualan SaaS")}>
+              <BadgeDollarSign size={18} />Penjualan SaaS
+            </button>
+          )}
         </nav>
 
         <div className="plan-card">
-          <div><span>PRO PLAN</span><b>Semua fitur aktif</b></div>
-          <span className="plan-pill">14 hari</span>
+          <div>
+            <span>{(data.entitlement.plan ?? "nonaktif").toUpperCase()} PLAN</span>
+            <b>{data.entitlement.source === "trial" ? "Masa uji coba" : "Berlangganan aktif"}</b>
+          </div>
+          {data.entitlement.daysLeft != null && <span className="plan-pill">{data.entitlement.daysLeft} hari</span>}
         </div>
+
         <div className="user-row">
           <span className="user-avatar">{userName.slice(0, 1).toUpperCase()}</span>
-          <div><b>{userName.split("@")[0]}</b><small>Owner</small></div>
-          <ChevronDown size={15} />
+          <div>
+            <b>{data.currentMember.name || userName.split("@")[0]}</b>
+            <small className="capitalize">{data.currentMember.role}</small>
+          </div>
+          <a className="sign-out" href="/keluar" aria-label="Keluar dari akun">
+            <LogOut size={16} />
+          </a>
         </div>
       </aside>
 
       <main className="main-content">
         <header className="topbar">
           <button className="mobile-menu" aria-label="Buka menu" onClick={() => setSidebarOpen(true)}><Menu size={21} /></button>
-          <div className="search-box"><Search size={17} /><input aria-label="Cari" placeholder="Cari transaksi, produk, atau menu..." /><kbd>⌘ K</kbd></div>
+          <div className="topbar-heading">
+            <b>{headings[active]?.title ?? "Ringkasan"}</b>
+            <small>{activeBranch?.name ?? "Semua outlet"} · {headings[active]?.subtitle ?? "Operasional hari ini"}</small>
+          </div>
           <div className="topbar-actions">
-            <button className="date-chip"><CalendarDays size={16} /> Hari ini, 22 Agu</button>
-            <button className="notification" aria-label="Notifikasi"><Bell size={19} /><span /></button>
-            <button className="new-sale" onClick={() => setActive("Kasir")}><ShoppingCart size={17} /> Penjualan baru</button>
+            <button type="button" className="ghost-action" onClick={() => void reload()} aria-label="Muat ulang data">
+              <RefreshCw size={16} />
+            </button>
+            {canSell(data) && (
+              <button className="new-sale" onClick={() => go("Kasir")}><ShoppingCart size={17} /> Penjualan baru</button>
+            )}
           </div>
         </header>
 
         <div className={`page-wrap ${active === "Kasir" ? "pos-page" : ""}`}>
-          {active === "Ringkasan" ? <>
-          <section className="page-heading">
-            <div>
-              <p className="eyebrow">SELAMAT DATANG KEMBALI</p>
-              <h1>Ringkasan operasional</h1>
-              <p>Pantau performa outlet dan ambil tindakan dari satu tempat.</p>
-            </div>
-            <div className="live-status"><span /> Outlet buka <b>·</b> Shift pagi</div>
-          </section>
+          {active !== "Ringkasan" && (
+            <section className="module-heading">
+              <div><h1>{headings[active]?.title}</h1><p>{headings[active]?.subtitle}</p></div>
+              {primaryAction && (
+                <button className="primary-action" onClick={primaryAction.onClick}>
+                  <primaryAction.icon size={16} /> {primaryAction.label}
+                </button>
+              )}
+            </section>
+          )}
 
-          <section className="kpi-grid">
-            <KpiCard label="Penjualan tersimpan" value={rupiah.format(dashboardSales)} helper="seluruh transaksi" trend="up" icon={BadgeDollarSign} tone="#f5e9e1" />
-            <KpiCard label="Transaksi" value={String(dashboard?.orders.length ?? 182)} helper={`Rata-rata ${rupiah.format(dashboardSales / Math.max(1, dashboard?.orders.length ?? 182))}`} icon={ReceiptText} tone="#e7efe9" />
-            <KpiCard label="Laba kotor" value={rupiah.format(dashboardSales - dashboardCogs)} helper={`Margin ${numberFormat(dashboardSales ? (dashboardSales - dashboardCogs) / dashboardSales * 100 : 0)}%`} trend="up" icon={BarChart3} tone="#edf0dc" />
-            <KpiCard label="Biaya operasional" value={rupiah.format(dashboardExpenses)} helper={`${dashboard?.expenses.length ?? 5} catatan biaya`} trend="down" icon={WalletCards} tone="#f8e9e7" />
-          </section>
+          {error && <p className="inline-error"><CircleAlert size={15} /> {error}</p>}
 
-          <section className="dashboard-grid">
-            <article className="panel sales-panel">
-              <div className="panel-header">
-                <div><h2>Performa penjualan</h2><p>Omzet per jam · Hari ini</p></div>
-                <button>Hari ini <ChevronDown size={14} /></button>
-              </div>
-              <div className="sales-summary"><b>{rupiah.format(dashboardSales)}</b><span className="trend positive"><ArrowUpRight size={14} />12,4%</span><small>total tersimpan</small></div>
-              <div className="chart-wrap" aria-label="Grafik penjualan per jam">
-                <div className="axis-labels"><span>800rb</span><span>600rb</span><span>400rb</span><span>200rb</span><span>0</span></div>
-                <div className="bars">
-                  {sales.map((value, index) => <div key={index} className="bar-column"><span className={index === sales.length - 1 ? "bar current" : "bar"} style={{ height: `${value * .88}px` }} /><small>{index % 2 === 0 ? `${7 + index}.00` : ""}</small></div>)}
-                </div>
-              </div>
-            </article>
-
-            <article className="panel quick-panel" id="quick-action">
-              <div className="panel-header"><div><h2>Aksi cepat</h2><p>Operasional tanpa pindah halaman</p></div></div>
-              <div className="quick-grid">
-                <button onClick={() => setActive("Kasir")}><span className="quick-icon primary"><ShoppingCart size={21} /></span><b>Penjualan</b><small>Buka kasir</small></button>
-                <button onClick={() => setActive("Pembelian")}><span className="quick-icon green"><PackagePlus size={21} /></span><b>Stok masuk</b><small>Catat belanja</small></button>
-                <button onClick={() => setActive("Biaya")}><span className="quick-icon yellow"><WalletCards size={21} /></span><b>Catat biaya</b><small>Operasional</small></button>
-                <button onClick={() => setActive("Shift Kas")}><span className="quick-icon red"><ClipboardList size={21} /></span><b>Tutup shift</b><small>Rekonsiliasi</small></button>
-              </div>
-              <div className="shift-card">
-                <div><span className="status-dot" /><div><b>Shift pagi berjalan</b><small>Dibuka 07.02 oleh Raka</small></div></div>
-                <strong>{rupiah.format(2350000)}</strong>
-                <small>Estimasi kas</small>
-              </div>
-            </article>
-
-            <article className="panel products-panel">
-              <div className="panel-header"><div><h2>Produk terlaris</h2><p>Berdasarkan jumlah terjual</p></div><button>Lihat semua</button></div>
-              <div className="product-list">
-                {displayProducts.map((product, index) => (
-                  <div className="product-row" key={product.name}>
-                    <span className="product-rank">{index + 1}</span>
-                    <span className="product-thumb" style={{ background: product.color }}><Coffee size={18} /></span>
-                    <div><b>{product.name}</b><small>{product.category}</small></div>
-                    <div className="product-total"><b>{product.sold} item</b><small>{rupiah.format(product.revenue)}</small></div>
-                  </div>
-                ))}
-              </div>
-            </article>
-
-            <article className="panel stock-panel">
-              <div className="panel-header"><div><h2>Stok perlu perhatian</h2><p>Segera lakukan pengadaan</p></div><span className="alert-count"><CircleAlert size={14} />{displayLowStock.length} item</span></div>
-              <div className="stock-list">
-                {displayLowStock.map((item) => (
-                  <div className="stock-row" key={item.name}>
-                    <div><b>{item.name}</b><small>Sisa {item.remaining}</small></div>
-                    <span className={`stock-badge ${item.status === "Kritis" ? "critical" : ""}`}>{item.status}</span>
-                    <div className="progress"><span style={{ width: `${item.percent}%` }} /></div>
-                  </div>
-                ))}
-              </div>
-              <button className="outline-action"><PackagePlus size={16} /> Buat daftar belanja</button>
-            </article>
-
-            <article className="panel activity-panel">
-              <div className="panel-header"><div><h2>Aktivitas terbaru</h2><p>Jejak operasional outlet</p></div><button>Lihat riwayat</button></div>
-              <div className="activity-list">
-                {activities.map((item) => {
-                  const Icon = item.icon;
-                  return <div key={item.title}><span><Icon size={16} /></span><p><b>{item.title}</b><small>{item.meta}</small></p></div>;
-                })}
-              </div>
-            </article>
-          </section>
-          </> : <ModulePage active={active} />}
+          {active === "Ringkasan" && <Dashboard {...moduleProps} go={go} />}
+          {active === "Kasir" && <Pos {...moduleProps} onReceipt={setReceipt} />}
+          {active === "Transaksi" && <Transactions {...moduleProps} />}
+          {active === "Produk & Resep" && (
+            <Products {...moduleProps} openCreate={modal === "product"} onCloseCreate={() => setModal(null)} />
+          )}
+          {active === "Stok Bahan" && (
+            <Inventory
+              {...moduleProps}
+              openCreate={modal === "ingredient"} onCloseCreate={() => setModal(null)}
+              openRestock={modal === "restock"} onCloseRestock={() => setModal(null)}
+            />
+          )}
+          {active === "Pembelian" && (
+            <>
+              <Purchases {...moduleProps} />
+              {modal === "restock" && (
+                <Inventory
+                  {...moduleProps}
+                  openCreate={false} onCloseCreate={() => setModal(null)}
+                  openRestock onCloseRestock={() => setModal(null)}
+                />
+              )}
+            </>
+          )}
+          {active === "Biaya" && <Expenses {...moduleProps} openCreate={modal === "expense"} onCloseCreate={() => setModal(null)} />}
+          {active === "Shift Kas" && <Shifts {...moduleProps} openAction={modal === "shift"} onCloseAction={() => setModal(null)} />}
+          {active === "Laporan" && <Reports {...moduleProps} />}
+          {active === "Cabang" && (
+            <Branches {...moduleProps} openCreate={modal === "branch"} onCloseCreate={() => setModal(null)} onManagePlan={() => setModal("plan")} />
+          )}
+          {active === "Tim & Akses" && <Team {...moduleProps} openCreate={modal === "member"} onCloseCreate={() => setModal(null)} />}
+          {active === "Pengaturan" && <Settings {...moduleProps} onManagePlan={() => setModal("plan")} />}
+          {active === "Penjualan SaaS" && data.platformAdmin && <SaasAdmin {...moduleProps} />}
         </div>
       </main>
+
+      {modal === "plan" && <PlanPicker {...moduleProps} onClose={() => setModal(null)} />}
+      {toast && <div className="toast"><Check size={16} />{toast}</div>}
+      {receipt && <ReceiptDialog receipt={receipt} onClose={() => setReceipt(null)} />}
+    </div>
+  );
+}
+
+function ReceiptDialog({ receipt, onClose }: { receipt: Receipt; onClose: () => void }) {
+  return (
+    <div className="receipt-backdrop">
+      <div className="receipt-dialog">
+        <div className="receipt-actions">
+          <button type="button" onClick={onClose}><X size={16} />Tutup</button>
+          <button type="button" onClick={() => window.print()}><ReceiptText size={16} />Cetak struk</button>
+        </div>
+
+        <StockWarnings warnings={receipt.stockWarnings ?? []} />
+
+        <article className="receipt-paper">
+          <div className="receipt-logo">
+            <Coffee size={24} />
+            <h2>{receipt.business}</h2>
+            <p>{receipt.branch}</p>
+          </div>
+          <div className="receipt-meta">
+            <span>{receipt.orderNo}</span>
+            <span>{new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short" }).format(new Date())}</span>
+          </div>
+          {receipt.customerName && <p className="receipt-customer">Pelanggan: {receipt.customerName}</p>}
+          <div className="receipt-items">
+            {receipt.items.map((item, index) => (
+              <div key={`${item.name}-${index}`}>
+                <span>{item.name}<small>{item.quantity} × {money.format(item.unitPrice)}</small></span>
+                <b>{money.format(item.subtotal)}</b>
+              </div>
+            ))}
+          </div>
+          <div className="receipt-lines">
+            <div><span>Subtotal</span><span>{money.format(receipt.subtotal)}</span></div>
+            {receipt.discount > 0 && <div><span>Diskon</span><span>−{money.format(receipt.discount)}</span></div>}
+            {receipt.tax > 0 && <div><span>Pajak</span><span>{money.format(receipt.tax)}</span></div>}
+          </div>
+          <div className="receipt-total"><span>Total</span><b>{money.format(receipt.total)}</b></div>
+          <div className="receipt-payment"><span>Pembayaran</span><b>{receipt.paymentMethod}</b></div>
+          <footer>
+            Kasir: {receipt.cashier}<br />
+            Terima kasih sudah membeli.<br />Simpan struk ini sebagai bukti transaksi.
+          </footer>
+        </article>
+      </div>
     </div>
   );
 }

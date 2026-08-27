@@ -23,14 +23,13 @@ Contoh lengkapnya ada di [`.env.example`](.env.example).
 1. **Buat database.** Di dashboard Vercel: Storage → Neon → Create. `DATABASE_URL` terisi otomatis ke project. (Bisa juga pakai Neon langsung, Supabase, atau Postgres mana pun — tinggal isi `DATABASE_URL` manual.)
 2. **Import repositori** ini di Vercel. Framework terdeteksi sebagai Next.js; tidak ada setelan build yang perlu diubah.
 3. **Isi environment variable** sisanya di Project Settings → Environment Variables.
-4. **Terapkan migrasi** sekali dari mesin lo:
+4. **Deploy.** Migrasi ikut jalan otomatis.
 
-   ```bash
-   echo 'DATABASE_URL=...' > .env.local
-   node --env-file=.env.local scripts/migrate.mjs
-   ```
+Migrasi dijalankan sebagai bagian dari build lewat `buildCommand` di `vercel.json`. `DATABASE_URL` sudah tersedia saat build, jadi skema database selalu menyusul kode yang membutuhkannya — tidak ada jeda di mana kode baru sudah live tapi tabelnya belum ada. Deploy berikutnya cukup `git push`.
 
-Deploy berikutnya cukup `git push` — Vercel yang membangun dan merilis. Jalankan `npm run db:migrate` lagi setiap kali ada berkas migrasi baru.
+Perintah itu sengaja hanya ada di `vercel.json`, bukan di dalam `npm run build`: CI membangun tanpa database sungguhan, dan build di sana tidak boleh ikut mencoba menghubunginya.
+
+Beberapa deploy yang berjalan bersamaan dijaga advisory lock Postgres — yang kedua menunggu yang pertama selesai, bukan menerapkan migrasi yang sama dua kali.
 
 ### Menjalankan di lokal
 

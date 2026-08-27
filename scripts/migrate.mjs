@@ -4,6 +4,10 @@
  * Dipakai untuk Neon (lokal maupun produksi). Berkas yang sudah pernah dijalankan dicatat di
  * tabel `_migrations`, jadi perintah ini aman dipanggil berkali-kali dan aman dijalankan
  * sebagai bagian dari alur deploy.
+ *
+ * Dijalankan otomatis oleh Vercel lewat `buildCommand` di vercel.json. Karena beberapa deploy
+ * bisa berjalan bersamaan, seluruh proses dijaga advisory lock Postgres: yang kedua menunggu
+ * yang pertama selesai, bukan menerapkan migrasi yang sama dua kali.
  */
 
 import { neon } from "@neondatabase/serverless";
@@ -71,7 +75,19 @@ async function connect() {
 
 const db = await connect();
 
+// Angka kuncinya bebas, asal sama di setiap proses yang memigrasikan database ini.
+const LOCK_KEY = 4_412_071;
+
+// Lock diambil SEBELUM apa pun disentuh, termasuk sebelum tabel catatannya dibuat.
+// `CREATE TABLE IF NOT EXISTS` bukan operasi aman untuk dijalankan bersamaan: dua proses
+// yang memeriksa "belum ada" di saat yang sama akan sama-sama mencoba membuatnya, dan yang
+// kalah gagal dengan pelanggaran unique constraint di katalog Postgres.
+await db.query("SELECT pg_advisory_lock($1)", [LOCK_KEY]);
 await db.query("CREATE TABLE IF NOT EXISTS _migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())");
+
+// Daftar yang sudah diterapkan dibaca SETELAH lock didapat. Membacanya lebih dulu berarti
+// deploy yang menunggu memakai daftar usang, lalu mencoba menerapkan ulang migrasi yang
+// baru saja dijalankan deploy sebelumnya.
 const applied = new Set((await db.query("SELECT name FROM _migrations")).map((row) => row.name));
 
 let count = 0;
@@ -94,5 +110,6 @@ for (const name of files) {
   count += 1;
 }
 
+await db.query("SELECT pg_advisory_unlock($1)", [LOCK_KEY]);
 await db.close();
 console.log(count ? `\n${count} migrasi diterapkan.` : "Database sudah paling baru.");

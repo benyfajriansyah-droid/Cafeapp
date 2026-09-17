@@ -1,10 +1,11 @@
 "use client";
 
-import { Boxes, Check, Copy, CreditCard, Pencil, ShieldCheck, Store, Trash2, UserMinus } from "lucide-react";
+import { Boxes, Check, Copy, CreditCard, Eye, Pencil, ShieldCheck, Store, Trash2, UserMinus } from "lucide-react";
 import { useState } from "react";
+import { MODULE_PERMISSIONS, permissionsFor } from "../lib/permissions";
 import {
   Empty, Field, Modal, SummaryStrip, canManage, isOwner, longDate, money,
-  roleAccess, roleLabels, type Branch, type Member, type ModuleProps, type PlanId,
+  roleLabels, type Branch, type Member, type ModuleProps, type PlanId,
 } from "./shared";
 
 /* ------------------------------ Cabang ------------------------------ */
@@ -60,7 +61,11 @@ export function Branches({ data, saving, submit, openCreate, onCloseCreate, onMa
         >
           <form onSubmit={async (event) => {
             event.preventDefault();
-            const payload = Object.fromEntries(new FormData(event.currentTarget));
+            const formData = new FormData(event.currentTarget);
+            const payload = {
+              ...Object.fromEntries(formData),
+              permissions: formData.getAll("permissions"),
+            };
             const result = editing
               ? await submit("update-branch", { targetBranchId: editing.id, ...payload })
               : await submit("create-branch", payload);
@@ -89,8 +94,8 @@ export function Branches({ data, saving, submit, openCreate, onCloseCreate, onMa
 
 /* ------------------------------- Tim ------------------------------- */
 
-export function Team({ data, saving, submit, openCreate, onCloseCreate }: ModuleProps & {
-  openCreate: boolean; onCloseCreate: () => void;
+export function Team({ data, saving, submit, openCreate, onCloseCreate, onPreview }: ModuleProps & {
+  openCreate: boolean; onCloseCreate: () => void; onPreview: (member: Member) => void;
 }) {
   const [editing, setEditing] = useState<Member | null>(null);
   const [invite, setInvite] = useState<{ url: string; email: string } | null>(null);
@@ -117,13 +122,14 @@ export function Team({ data, saving, submit, openCreate, onCloseCreate }: Module
                 <td><b>{member.name || member.email.split("@")[0]}</b></td>
                 <td>{member.email}</td>
                 <td><span className="category-badge">{roleLabels[member.role] ?? member.role}</span></td>
-                <td>{roleAccess[member.role] ?? "–"}</td>
+                <td>{permissionsFor(member).map((key) => MODULE_PERMISSIONS.find((item) => item.key === key)?.label).filter(Boolean).join(", ") || "Tanpa menu"}</td>
                 <td><span className="stock-chip">{member.status === "active" ? "Aktif" : "Ditangguhkan"}</span></td>
                 {editable && (
                   <td className="right">
-                    {member.role === "owner" ? "–" : (
+                    {member.role === "owner" ? "–" : <div className="row-actions">
+                      <button type="button" className="row-action" onClick={() => onPreview(member)}><Eye size={14} /> Lihat</button>
                       <button type="button" className="row-action" onClick={() => setEditing(member)}><Pencil size={14} /> Ubah</button>
-                    )}
+                    </div>}
                   </td>
                 )}
               </tr>
@@ -242,6 +248,23 @@ export function Team({ data, saving, submit, openCreate, onCloseCreate }: Module
                 </Field>
               )}
             </div>
+            <fieldset className="permission-picker">
+              <legend>Menu yang boleh dibuka</legend>
+              <p>Centang menu yang ingin ditampilkan untuk akun karyawan ini.</p>
+              <div>
+                {MODULE_PERMISSIONS.filter((item) => !["team", "settings"].includes(item.key)).map((item) => (
+                  <label key={item.key}>
+                    <input
+                      type="checkbox"
+                      name="permissions"
+                      value={item.key}
+                      defaultChecked={permissionsFor(editing ?? { role: "cashier", permissions: "" }).includes(item.key)}
+                    />
+                    <span>{item.label}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <div className="modal-actions">
               {editing && (
                 <button

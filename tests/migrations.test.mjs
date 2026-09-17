@@ -53,6 +53,23 @@ test("semua migrasi berjalan berurutan dari database kosong", async () => {
   await db.close();
 });
 
+test("anggota dan undangan menyimpan hak akses menu", async () => {
+  const db = await freshDatabase();
+  const { rows } = await db.query(`
+    SELECT table_name, column_default, is_nullable
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND column_name = 'permissions'
+      AND table_name IN ('members', 'invitations')
+    ORDER BY table_name
+  `);
+
+  assert.deepEqual(rows.map((row) => row.table_name), ["invitations", "members"]);
+  assert.ok(rows.every((row) => row.is_nullable === "NO"));
+  assert.ok(rows.every((row) => String(row.column_default).includes("''")));
+  await db.close();
+});
+
 test("nominal uang bertipe integer, besaran fisik tetap pecahan", async () => {
   // Rupiah tidak punya sen. Menyimpannya sebagai pecahan membuat penjumlahan di laporan
   // mengakumulasi galat yang tidak bisa dijelaskan ke pemilik usaha.

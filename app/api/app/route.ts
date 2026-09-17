@@ -36,6 +36,7 @@ import { calculateOrder, clampPercent, positiveRupiah, rupiah, weightedAverageCo
 import { chunkRows } from "../../lib/chunk";
 import { isPlatformAdmin, safeErrorMessage, UserFacingError } from "../../lib/platform";
 import { seedDemoWorkspace } from "../../lib/demo-data";
+import { hasPermission, normalizePermissions, type ModulePermission } from "../../lib/permissions";
 
 type Db = ReturnType<typeof getDb>;
 type Workspace = typeof workspaces.$inferSelect;
@@ -55,6 +56,17 @@ type Context = {
 };
 
 const LIST_LIMIT = 100;
+
+const ACTION_PERMISSION: Partial<Record<string, ModulePermission>> = {
+  "create-order": "pos", "void-order": "sales",
+  "open-shift": "shifts", "close-shift": "shifts",
+  "create-product": "products", "update-product": "products", "archive-product": "products", "set-recipe": "products",
+  "create-ingredient": "inventory", "update-ingredient": "inventory", "archive-ingredient": "inventory",
+  restock: "purchases", "adjust-stock": "inventory",
+  "create-expense": "expenses", "update-expense": "expenses", "delete-expense": "expenses",
+  "create-member": "team", "revoke-invitation": "team", "update-member": "team", "remove-member": "team",
+  "create-branch": "branches", "update-branch": "branches", "update-settings": "settings",
+};
 
 function id(prefix: string) {
   return `${prefix}_${crypto.randomUUID()}`;
@@ -365,6 +377,7 @@ export async function GET(request: Request) {
         tokenHash: row.tokenHash,
         email: row.email,
         role: row.role,
+        permissions: row.permissions,
         name: row.name,
         invitedBy: row.invitedBy,
         expiresAt: row.expiresAt,
@@ -407,6 +420,11 @@ export async function POST(request: Request) {
     if (!handler) return Response.json({ error: "Aksi tidak dikenali" }, { status: 400 });
 
     const context = await getContext(request, user.email, text(body.branchId) || undefined);
+
+    const requiredPermission = ACTION_PERMISSION[action];
+    if (requiredPermission && !hasPermission(context.currentMember, requiredPermission)) {
+      return Response.json({ error: "Akun lo tidak diberi akses untuk menu ini" }, { status: 403 });
+    }
 
     // Satu penjaga untuk seluruh API: langganan mati berarti data operasional tidak boleh
     // berubah lagi. Yang tersisa hanya jalan keluar — memilih paket dan menghubungkan pembayaran.
@@ -1057,10 +1075,11 @@ const handlers: Record<string, Handler> = {
    * yang jauh lebih umum dipakai usaha kecil di sini daripada email.
    */
   "create-member": async (context, body) => {
-    require_(context, "manage");
+    require_(context, "owner");
     const memberEmail = text(body.email).toLowerCase();
     if (!memberEmail.includes("@")) fail("Email anggota tim tidak valid");
     const role = assignableRole(context, body.role);
+    const permissions = normalizePermissions(body.permissions, role);
     const name = text(body.name);
 
     const memberRows = await context.db.select().from(members).where(eq(members.workspaceId, context.workspace.id));
@@ -1089,6 +1108,7 @@ const handlers: Record<string, Handler> = {
       workspaceId: context.workspace.id,
       email: memberEmail,
       role,
+      permissions,
       name,
       invitedBy: context.email,
       expiresAt: isoIn(INVITATION_LIFETIME_MS),
@@ -1103,7 +1123,7 @@ const handlers: Record<string, Handler> = {
   },
 
   "revoke-invitation": async (context, body) => {
-    require_(context, "manage");
+    require_(context, "owner");
     const tokenHash = text(body.tokenHash);
     const invitation = await context.db.query.invitations.findFirst({
       where: and(eq(invitations.tokenHash, tokenHash), eq(invitations.workspaceId, context.workspace.id)),
@@ -1118,19 +1138,21 @@ const handlers: Record<string, Handler> = {
   },
 
   "update-member": async (context, body) => {
-    require_(context, "manage");
+    require_(context, "owner");
     const member = await findOwned(context, members, text(body.memberId), "Anggota tim");
     if (member.role === "owner") fail("Peran pemilik tidak bisa diubah");
+    const nextRole = body.role === undefined ? member.role : assignableRole(context, body.role);
     await context.db.update(members).set({
       name: text(body.name, member.name),
-      role: body.role === undefined ? member.role : assignableRole(context, body.role),
+      role: nextRole,
+      permissions: normalizePermissions(body.permissions, nextRole),
       status: body.status === "suspended" ? "suspended" : "active",
     }).where(eq(members.id, member.id));
     return { ok: true };
   },
 
   "remove-member": async (context, body) => {
-    require_(context, "manage");
+    require_(context, "owner");
     const member = await findOwned(context, members, text(body.memberId), "Anggota tim");
     if (member.role === "owner") fail("Pemilik tidak bisa dikeluarkan dari workspace");
     if (member.email === context.email) fail("Lo nggak bisa mengeluarkan diri sendiri");

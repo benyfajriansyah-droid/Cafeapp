@@ -129,6 +129,7 @@ export const shifts = pgTable("shifts", {
 export const members = pgTable("members", {
   id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), email: text("email").notNull(),
   name: text("name").notNull().default(""), role: text("role").notNull().default("cashier"),
+  permissions: text("permissions").notNull().default(""),
   status: text("status").notNull().default("active"), invitedBy: text("invited_by").notNull().default(""),
   createdAt: text("created_at").notNull().default(NOW_ISO),
 }, (table) => [
@@ -221,6 +222,7 @@ export const invitations = pgTable("invitations", {
   workspaceId: text("workspace_id").notNull(),
   email: text("email").notNull(),
   role: text("role").notNull().default("cashier"),
+  permissions: text("permissions").notNull().default(""),
   name: text("name").notNull().default(""),
   invitedBy: text("invited_by").notNull().default(""),
   expiresAt: text("expires_at").notNull(),

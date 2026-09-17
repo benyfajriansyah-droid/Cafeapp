@@ -278,7 +278,7 @@ async function applyInvitation(invitation: Invitation, email: string): Promise<v
 
   if (existing) {
     await db.update(members)
-      .set({ role: invitation.role, status: "active", name: existing.name || invitation.name })
+      .set({ role: invitation.role, permissions: invitation.permissions, status: "active", name: existing.name || invitation.name })
       .where(eq(members.id, existing.id));
   } else {
     await db.insert(members).values({
@@ -287,6 +287,7 @@ async function applyInvitation(invitation: Invitation, email: string): Promise<v
       email,
       name: invitation.name,
       role: invitation.role,
+      permissions: invitation.permissions,
       status: "active",
       invitedBy: invitation.invitedBy,
     });

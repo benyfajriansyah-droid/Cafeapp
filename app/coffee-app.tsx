@@ -2,7 +2,7 @@
 
 import {
   BadgeDollarSign, BarChart3, Boxes, Building2, Check, CircleAlert, ClipboardList, Coffee,
-  LayoutDashboard, LogOut, Menu, PackagePlus, Plus, ReceiptText, RefreshCw, Settings as SettingsIcon,
+  EyeOff, LayoutDashboard, LogOut, Menu, PackagePlus, Plus, ReceiptText, RefreshCw, Settings as SettingsIcon,
   ShoppingCart, UserPlus, UsersRound, WalletCards, X,
 } from "lucide-react";
 import { useState } from "react";
@@ -20,23 +20,25 @@ import { Branches, PlanPicker, Settings, Team } from "./modules/business";
 import { LockedScreen, Onboarding } from "./modules/onboarding";
 import { canManage, canSell, canStock, isOwner, money, type ModuleProps, type Receipt } from "./modules/shared";
 import { useAppData } from "./modules/use-app-data";
+import { permissionsFor, type ModulePermission } from "./lib/permissions";
+import type { Member } from "./modules/shared";
 
 const operations = [
-  { label: "Ringkasan", icon: LayoutDashboard },
-  { label: "Kasir", icon: ShoppingCart },
-  { label: "Transaksi", icon: ReceiptText },
-  { label: "Produk & Resep", icon: Coffee },
-  { label: "Stok Bahan", icon: Boxes },
-  { label: "Pembelian", icon: PackagePlus },
-  { label: "Biaya", icon: WalletCards },
-  { label: "Shift Kas", icon: ClipboardList },
-  { label: "Laporan", icon: BarChart3 },
+  { label: "Ringkasan", permission: "dashboard" as const, icon: LayoutDashboard },
+  { label: "Kasir", permission: "pos" as const, icon: ShoppingCart },
+  { label: "Transaksi", permission: "sales" as const, icon: ReceiptText },
+  { label: "Produk & Resep", permission: "products" as const, icon: Coffee },
+  { label: "Stok Bahan", permission: "inventory" as const, icon: Boxes },
+  { label: "Pembelian", permission: "purchases" as const, icon: PackagePlus },
+  { label: "Biaya", permission: "expenses" as const, icon: WalletCards },
+  { label: "Shift Kas", permission: "shifts" as const, icon: ClipboardList },
+  { label: "Laporan", permission: "reports" as const, icon: BarChart3 },
 ];
 
 const business = [
-  { label: "Cabang", icon: Building2 },
-  { label: "Tim & Akses", icon: UsersRound },
-  { label: "Pengaturan", icon: SettingsIcon },
+  { label: "Cabang", permission: "branches" as const, icon: Building2 },
+  { label: "Tim & Akses", permission: "team" as const, icon: UsersRound },
+  { label: "Pengaturan", permission: "settings" as const, icon: SettingsIcon },
 ];
 
 export default function CoffeeApp({ userName }: { userName: string }) {
@@ -45,13 +47,14 @@ export default function CoffeeApp({ userName }: { userName: string }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [modal, setModal] = useState<"product" | "ingredient" | "restock" | "expense" | "member" | "branch" | "shift" | "plan" | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [previewMember, setPreviewMember] = useState<Member | null>(null);
 
-  const { data, loading, saving, error, toast, submit, reload, setRange, branchId, setBranchId } = app;
+  const { data: loadedData, loading, saving, error, toast, submit, reload, setRange, branchId, setBranchId } = app;
 
-  if (loading && !data) {
+  if (loading && !loadedData) {
     return <div className="module-loading"><span /><p>Menyiapkan operasional kedai…</p></div>;
   }
-  if (!data) {
+  if (!loadedData) {
     return (
       <div className="module-error">
         <CircleAlert size={28} />
@@ -62,11 +65,25 @@ export default function CoffeeApp({ userName }: { userName: string }) {
     );
   }
 
-  if (!data.workspace.onboardingCompleted) {
-    return <Onboarding data={data} saving={saving} onComplete={(payload) => submit("complete-onboarding", payload)} />;
+  if (!loadedData.workspace.onboardingCompleted) {
+    return <Onboarding data={loadedData} saving={saving} onComplete={(payload) => submit("complete-onboarding", payload)} />;
   }
 
-  const moduleProps: ModuleProps = { data, saving, submit, reload, setRange };
+  const data = previewMember ? { ...loadedData, currentMember: previewMember, platformAdmin: false } : loadedData;
+  const allowed = new Set<ModulePermission>(permissionsFor(data.currentMember));
+  const visibleOperations = operations.filter((item) => allowed.has(item.permission));
+  const visibleBusiness = business.filter((item) => allowed.has(item.permission));
+  const accessibleLabels = new Set([...visibleOperations, ...visibleBusiness].map((item) => item.label));
+  const currentActive = accessibleLabels.has(active) || (active === "Penjualan SaaS" && data.platformAdmin)
+    ? active
+    : (visibleOperations[0]?.label ?? visibleBusiness[0]?.label ?? "");
+  const moduleProps: ModuleProps = {
+    data,
+    saving: previewMember ? true : saving,
+    submit: previewMember ? async () => false : submit,
+    reload,
+    setRange,
+  };
 
   if (data.entitlement.locked) {
     return (
@@ -85,13 +102,13 @@ export default function CoffeeApp({ userName }: { userName: string }) {
 
   /** Tombol aksi utama tiap modul — hanya muncul kalau peran ini memang boleh melakukannya. */
   const primaryAction = (() => {
-    if (active === "Produk & Resep" && canManage(data)) return { label: "Produk baru", icon: Plus, onClick: () => setModal("product") };
-    if (active === "Stok Bahan" && canStock(data)) return { label: "Bahan baru", icon: Plus, onClick: () => setModal("ingredient") };
-    if (active === "Pembelian" && canStock(data)) return { label: "Stok masuk", icon: PackagePlus, onClick: () => setModal("restock") };
-    if (active === "Biaya" && canManage(data)) return { label: "Catat biaya", icon: Plus, onClick: () => setModal("expense") };
-    if (active === "Shift Kas" && canSell(data)) return { label: activeShift ? "Tutup shift" : "Buka shift", icon: Check, onClick: () => setModal("shift") };
-    if (active === "Cabang" && isOwner(data)) return { label: "Tambah outlet", icon: Plus, onClick: () => setModal("branch") };
-    if (active === "Tim & Akses" && canManage(data)) return { label: "Tambah anggota", icon: UserPlus, onClick: () => setModal("member") };
+    if (currentActive === "Produk & Resep" && canManage(data)) return { label: "Produk baru", icon: Plus, onClick: () => setModal("product") };
+    if (currentActive === "Stok Bahan" && canStock(data)) return { label: "Bahan baru", icon: Plus, onClick: () => setModal("ingredient") };
+    if (currentActive === "Pembelian" && canStock(data)) return { label: "Stok masuk", icon: PackagePlus, onClick: () => setModal("restock") };
+    if (currentActive === "Biaya" && canManage(data)) return { label: "Catat biaya", icon: Plus, onClick: () => setModal("expense") };
+    if (currentActive === "Shift Kas" && canSell(data)) return { label: activeShift ? "Tutup shift" : "Buka shift", icon: Check, onClick: () => setModal("shift") };
+    if (currentActive === "Cabang" && isOwner(data)) return { label: "Tambah outlet", icon: Plus, onClick: () => setModal("branch") };
+    if (currentActive === "Tim & Akses" && canManage(data)) return { label: "Tambah anggota", icon: UserPlus, onClick: () => setModal("member") };
     return null;
   })();
 
@@ -137,25 +154,25 @@ export default function CoffeeApp({ userName }: { userName: string }) {
 
         <nav className="side-nav" aria-label="Navigasi utama">
           <span className="nav-eyebrow">OPERASIONAL</span>
-          {operations.map((item) => {
+          {visibleOperations.map((item) => {
             const Icon = item.icon;
             return (
-              <button key={item.label} className={active === item.label ? "active" : ""} onClick={() => go(item.label)}>
+              <button key={item.label} className={currentActive === item.label ? "active" : ""} onClick={() => go(item.label)}>
                 <Icon size={18} />{item.label}
               </button>
             );
           })}
           <span className="nav-eyebrow business-label">BISNIS</span>
-          {business.map((item) => {
+          {visibleBusiness.map((item) => {
             const Icon = item.icon;
             return (
-              <button key={item.label} className={active === item.label ? "active" : ""} onClick={() => go(item.label)}>
+              <button key={item.label} className={currentActive === item.label ? "active" : ""} onClick={() => go(item.label)}>
                 <Icon size={18} />{item.label}
               </button>
             );
           })}
           {data.platformAdmin && (
-            <button className={active === "Penjualan SaaS" ? "active" : ""} onClick={() => go("Penjualan SaaS")}>
+            <button className={currentActive === "Penjualan SaaS" ? "active" : ""} onClick={() => go("Penjualan SaaS")}>
               <BadgeDollarSign size={18} />Penjualan SaaS
             </button>
           )}
@@ -182,26 +199,32 @@ export default function CoffeeApp({ userName }: { userName: string }) {
       </aside>
 
       <main className="main-content">
+        {previewMember && <div className="preview-banner">
+          <span>Preview sebagai {previewMember.name || previewMember.email} · {previewMember.role}</span>
+          <button type="button" onClick={() => { setPreviewMember(null); setActive("Tim & Akses"); }}>
+            <EyeOff size={15} /> Kembali sebagai owner
+          </button>
+        </div>}
         <header className="topbar">
           <button className="mobile-menu" aria-label="Buka menu" onClick={() => setSidebarOpen(true)}><Menu size={21} /></button>
           <div className="topbar-heading">
-            <b>{headings[active]?.title ?? "Ringkasan"}</b>
-            <small>{activeBranch?.name ?? "Semua outlet"} · {headings[active]?.subtitle ?? "Operasional hari ini"}</small>
+            <b>{headings[currentActive]?.title ?? "Belum ada akses menu"}</b>
+            <small>{activeBranch?.name ?? "Semua outlet"} · {headings[currentActive]?.subtitle ?? "Hubungi pemilik untuk mengatur akses"}</small>
           </div>
           <div className="topbar-actions">
             <button type="button" className="ghost-action" onClick={() => void reload()} aria-label="Muat ulang data">
               <RefreshCw size={16} />
             </button>
-            {canSell(data) && (
+            {canSell(data) && allowed.has("pos") && (
               <button className="new-sale" onClick={() => go("Kasir")}><ShoppingCart size={17} /> Penjualan baru</button>
             )}
           </div>
         </header>
 
-        <div className={`page-wrap ${active === "Kasir" ? "pos-page" : ""}`}>
-          {active !== "Ringkasan" && (
+        <div className={`page-wrap ${currentActive === "Kasir" ? "pos-page" : ""}`}>
+          {currentActive && currentActive !== "Ringkasan" && (
             <section className="module-heading">
-              <div><h1>{headings[active]?.title}</h1><p>{headings[active]?.subtitle}</p></div>
+              <div><h1>{headings[currentActive]?.title}</h1><p>{headings[currentActive]?.subtitle}</p></div>
               {primaryAction && (
                 <button className="primary-action" onClick={primaryAction.onClick}>
                   <primaryAction.icon size={16} /> {primaryAction.label}
@@ -212,20 +235,21 @@ export default function CoffeeApp({ userName }: { userName: string }) {
 
           {error && <p className="inline-error"><CircleAlert size={15} /> {error}</p>}
 
-          {active === "Ringkasan" && <Dashboard {...moduleProps} go={go} />}
-          {active === "Kasir" && <Pos {...moduleProps} onReceipt={setReceipt} />}
-          {active === "Transaksi" && <Transactions {...moduleProps} />}
-          {active === "Produk & Resep" && (
+          {!currentActive && <p className="inline-error"><CircleAlert size={15} /> Akun ini belum diberi akses menu. Hubungi pemilik.</p>}
+          {currentActive === "Ringkasan" && <Dashboard {...moduleProps} go={go} />}
+          {currentActive === "Kasir" && <Pos {...moduleProps} onReceipt={setReceipt} />}
+          {currentActive === "Transaksi" && <Transactions {...moduleProps} />}
+          {currentActive === "Produk & Resep" && (
             <Products {...moduleProps} openCreate={modal === "product"} onCloseCreate={() => setModal(null)} />
           )}
-          {active === "Stok Bahan" && (
+          {currentActive === "Stok Bahan" && (
             <Inventory
               {...moduleProps}
               openCreate={modal === "ingredient"} onCloseCreate={() => setModal(null)}
               openRestock={modal === "restock"} onCloseRestock={() => setModal(null)}
             />
           )}
-          {active === "Pembelian" && (
+          {currentActive === "Pembelian" && (
             <>
               <Purchases {...moduleProps} />
               {modal === "restock" && (
@@ -237,15 +261,24 @@ export default function CoffeeApp({ userName }: { userName: string }) {
               )}
             </>
           )}
-          {active === "Biaya" && <Expenses {...moduleProps} openCreate={modal === "expense"} onCloseCreate={() => setModal(null)} />}
-          {active === "Shift Kas" && <Shifts {...moduleProps} openAction={modal === "shift"} onCloseAction={() => setModal(null)} />}
-          {active === "Laporan" && <Reports {...moduleProps} />}
-          {active === "Cabang" && (
+          {currentActive === "Biaya" && <Expenses {...moduleProps} openCreate={modal === "expense"} onCloseCreate={() => setModal(null)} />}
+          {currentActive === "Shift Kas" && <Shifts {...moduleProps} openAction={modal === "shift"} onCloseAction={() => setModal(null)} />}
+          {currentActive === "Laporan" && <Reports {...moduleProps} />}
+          {currentActive === "Cabang" && (
             <Branches {...moduleProps} openCreate={modal === "branch"} onCloseCreate={() => setModal(null)} onManagePlan={() => setModal("plan")} />
           )}
-          {active === "Tim & Akses" && <Team {...moduleProps} openCreate={modal === "member"} onCloseCreate={() => setModal(null)} />}
-          {active === "Pengaturan" && <Settings {...moduleProps} onManagePlan={() => setModal("plan")} />}
-          {active === "Penjualan SaaS" && data.platformAdmin && <SaasAdmin {...moduleProps} />}
+          {currentActive === "Tim & Akses" && <Team
+            {...moduleProps}
+            openCreate={modal === "member"}
+            onCloseCreate={() => setModal(null)}
+            onPreview={(member) => {
+              setPreviewMember(member);
+              const first = [...operations, ...business].find((item) => permissionsFor(member).includes(item.permission));
+              setActive(first?.label ?? "Kasir");
+            }}
+          />}
+          {currentActive === "Pengaturan" && <Settings {...moduleProps} onManagePlan={() => setModal("plan")} />}
+          {currentActive === "Penjualan SaaS" && data.platformAdmin && <SaasAdmin {...moduleProps} />}
         </div>
       </main>
 

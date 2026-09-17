@@ -36,12 +36,13 @@ export type Shift = {
   id: string; branchId: string; cashierName: string; openingCash: number; actualCash: number | null;
   expectedCash: number | null; variance: number | null; status: string; openedAt: string; closedAt: string | null; note: string;
 };
-export type Member = { id: string; email: string; name: string; role: string; status: string };
+export type Member = { id: string; email: string; name: string; role: string; permissions: string; status: string };
 
 export type Invitation = {
   tokenHash: string;
   email: string;
   role: string;
+  permissions: string;
   name: string;
   invitedBy: string;
   expiresAt: string;

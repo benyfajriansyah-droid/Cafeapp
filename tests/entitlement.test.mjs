@@ -2,12 +2,25 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  IS_DKRIUK_EDITION,
   actionAllowedWhenLocked,
   entitlementOf,
+  subscriptionEntitlementOf,
   limitsFor,
   periodEndFrom,
   PLANS,
 } from "../app/lib/plans.ts";
+
+test("edisi Dkriuk selalu aktif tanpa pembelian paket", () => {
+  assert.equal(IS_DKRIUK_EDITION, true);
+  assert.deepEqual(entitlementOf(workspace(), NOW), {
+    plan: "business",
+    source: "paid",
+    locked: false,
+    expiresAt: null,
+    daysLeft: null,
+  });
+});
 
 const NOW = new Date("2026-06-01T00:00:00.000Z");
 const future = (days) => new Date(NOW.getTime() + days * 86_400_000).toISOString();
@@ -23,20 +36,20 @@ const workspace = (overrides = {}) => ({
 
 test("paket yang dipilih sendiri tidak memberi hak akses apa pun", () => {
   // Ini kebocoran utamanya: dulu `plan` cukup untuk membuka batas Business tanpa bayar.
-  // `entitlementOf` sengaja tidak menerima `plan`, jadi tidak ada jalan masuk lewat situ.
-  const claimed = entitlementOf(workspace({ subscriptionStatus: "pending_payment" }), NOW);
+  // `subscriptionEntitlementOf` sengaja tidak menerima `plan`, jadi tidak ada jalan masuk lewat situ.
+  const claimed = subscriptionEntitlementOf(workspace({ subscriptionStatus: "pending_payment" }), NOW);
   assert.equal(claimed.plan, null);
   assert.equal(claimed.locked, true);
 });
 
 test("status aktif tanpa paidPlan tetap terkunci", () => {
-  const spoofed = entitlementOf(workspace({ subscriptionStatus: "active" }), NOW);
+  const spoofed = subscriptionEntitlementOf(workspace({ subscriptionStatus: "active" }), NOW);
   assert.equal(spoofed.locked, true);
   assert.equal(spoofed.source, "none");
 });
 
 test("langganan berbayar yang masih berlaku memberi paket yang dibayar", () => {
-  const paid = entitlementOf(workspace({
+  const paid = subscriptionEntitlementOf(workspace({
     paidPlan: "business",
     subscriptionStatus: "active",
     currentPeriodEnd: future(20),
@@ -48,7 +61,7 @@ test("langganan berbayar yang masih berlaku memberi paket yang dibayar", () => {
 });
 
 test("langganan berbayar yang lewat tanggal ikut terkunci", () => {
-  const expired = entitlementOf(workspace({
+  const expired = subscriptionEntitlementOf(workspace({
     paidPlan: "pro",
     subscriptionStatus: "active",
     currentPeriodEnd: past(1),
@@ -58,7 +71,7 @@ test("langganan berbayar yang lewat tanggal ikut terkunci", () => {
 });
 
 test("langganan berbayar tanpa tanggal akhir dianggap masih berjalan", () => {
-  const manual = entitlementOf(workspace({
+  const manual = subscriptionEntitlementOf(workspace({
     paidPlan: "starter",
     subscriptionStatus: "active",
     currentPeriodEnd: null,
@@ -68,19 +81,19 @@ test("langganan berbayar tanpa tanggal akhir dianggap masih berjalan", () => {
 });
 
 test("masa uji coba memberi akses sementara lalu berhenti", () => {
-  const running = entitlementOf(workspace({ trialEndsAt: future(5) }), NOW);
+  const running = subscriptionEntitlementOf(workspace({ trialEndsAt: future(5) }), NOW);
   assert.equal(running.source, "trial");
   assert.equal(running.plan, "pro");
   assert.equal(running.daysLeft, 5);
 
   // Ini yang dulu tidak pernah terjadi: trial habis tapi akses jalan terus selamanya.
-  const over = entitlementOf(workspace({ trialEndsAt: past(1) }), NOW);
+  const over = subscriptionEntitlementOf(workspace({ trialEndsAt: past(1) }), NOW);
   assert.equal(over.locked, true);
   assert.equal(over.plan, null);
 });
 
 test("langganan berbayar menang atas trial yang sudah lewat", () => {
-  const both = entitlementOf(workspace({
+  const both = subscriptionEntitlementOf(workspace({
     paidPlan: "pro",
     subscriptionStatus: "active",
     currentPeriodEnd: future(30),
@@ -91,13 +104,13 @@ test("langganan berbayar menang atas trial yang sudah lewat", () => {
 });
 
 test("batas outlet dan tim mengikuti paket yang berlaku", () => {
-  const starter = limitsFor(entitlementOf(workspace({
+  const starter = limitsFor(subscriptionEntitlementOf(workspace({
     paidPlan: "starter", subscriptionStatus: "active", currentPeriodEnd: future(10),
   }), NOW));
   assert.deepEqual(starter, { branches: PLANS.starter.branches, members: PLANS.starter.members });
 
   // Workspace terkunci tidak boleh menambah apa pun.
-  const locked = limitsFor(entitlementOf(workspace(), NOW));
+  const locked = limitsFor(subscriptionEntitlementOf(workspace(), NOW));
   assert.deepEqual(locked, { branches: 1, members: 1 });
 });
 

@@ -48,6 +48,14 @@ export type Entitlement = {
 };
 
 /**
+ * Edisi Dkriuk dijual putus, bukan SaaS berlangganan. Branch ini sengaja
+ * memberikan akses permanen supaya akun owner/kasir tidak pernah diarahkan ke
+ * checkout OrderHero. Aturan langganan tetap dipertahankan di branch utama
+ * Cafe App dan tidak ikut berubah.
+ */
+export const IS_DKRIUK_EDITION = true;
+
+/**
  * Menentukan hak akses nyata sebuah workspace.
  *
  * Yang menentukan HANYA `paidPlan` (diisi setelah pembayaran diverifikasi) atau masa uji coba
@@ -55,6 +63,21 @@ export type Entitlement = {
  * kalau dipercaya, siapa pun bisa menaikkan paketnya sendiri lewat satu request.
  */
 export function entitlementOf(workspace: EntitlementInput, now: Date = new Date()): Entitlement {
+  if (IS_DKRIUK_EDITION) {
+    return {
+      plan: "business",
+      source: "paid",
+      locked: false,
+      expiresAt: null,
+      daysLeft: null,
+    };
+  }
+
+  return subscriptionEntitlementOf(workspace, now);
+}
+
+/** Aturan SaaS asli, tetap diuji agar branch utama bisa mengambil perbaikan lain dengan aman. */
+export function subscriptionEntitlementOf(workspace: EntitlementInput, now: Date = new Date()): Entitlement {
   const current = now.getTime();
 
   if (workspace.subscriptionStatus === "active" && isPlanId(workspace.paidPlan)) {

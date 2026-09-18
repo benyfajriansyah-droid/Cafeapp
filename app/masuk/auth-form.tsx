@@ -57,16 +57,16 @@ export default function AuthForm({
     <main className="auth-shell">
       <Link className="auth-brand" href="/">
         <Coffee size={20} />
-        <b>Famz Coffee OS</b>
+        <b>Dkriuk Cafe App</b>
       </Link>
 
       <section className="auth-card">
         <div className="auth-head">
-          <h1>{isRegister ? "Buat akun." : "Masuk ke workspace lo."}</h1>
+          <h1>{isRegister ? "Buat akun." : "Masuk ke Dkriuk."}</h1>
           <p>
             {isRegister
               ? "Satu akun untuk semua outlet dan tim usaha lo."
-              : "Kasir, stok, dan laporan usaha kopi dalam satu tempat."}
+              : "Kasir, produk, stok, dan laporan dalam satu tempat."}
           </p>
         </div>
 
@@ -149,10 +149,7 @@ export default function AuthForm({
 
         <div className="auth-foot">
           {!isRegister && <Link href="/lupa-password">Lupa kata sandi?</Link>}
-          <p>
-            {isRegister ? "Sudah punya akun?" : "Belum punya akun?"}{" "}
-            <Link href={otherHref}>{isRegister ? "Masuk" : "Daftar gratis"}</Link>
-          </p>
+          {isRegister && <p>Sudah punya akun? <Link href={otherHref}>Masuk</Link></p>}
         </div>
       </section>
 

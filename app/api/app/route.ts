@@ -37,6 +37,7 @@ import { chunkRows } from "../../lib/chunk";
 import { isPlatformAdmin, safeErrorMessage, UserFacingError } from "../../lib/platform";
 import { seedDemoWorkspace } from "../../lib/demo-data";
 import { hasPermission, normalizePermissions, type ModulePermission } from "../../lib/permissions";
+import { buildSpreadsheetXml, type SpreadsheetSheet } from "../../lib/spreadsheet";
 
 type Db = ReturnType<typeof getDb>;
 type Workspace = typeof workspaces.$inferSelect;
@@ -294,6 +295,90 @@ export async function GET(request: Request) {
       .orderBy(sql`sum(${orderItems.quantity}) desc`)
       .limit(5);
 
+    const sales = Number(salesRow?.sales ?? 0);
+    const cogs = Math.round(Number(cogsRow?.cogs ?? 0));
+    const expenseTotal = Number(expenseRow?.total ?? 0);
+
+    if (url.searchParams.get("export") === "spreadsheet") {
+      if (!hasPermission(currentMember, "reports")) {
+        return Response.json({ error: "Akun lo tidak diberi akses untuk mengekspor laporan" }, { status: 403 });
+      }
+
+      const exportOrderWhere = and(
+        eq(orders.workspaceId, workspace.id),
+        ...(branchFilter ? [eq(orders.branchId, branchFilter)] : []),
+        ...(range.from ? [gte(orders.createdAt, `${range.from}T00:00:00.000Z`)] : []),
+        ...(range.to ? [lte(orders.createdAt, `${range.to}T23:59:59.999Z`)] : []),
+      );
+      const movementWhere = and(
+        eq(stockMovements.workspaceId, workspace.id),
+        ...(branchFilter ? [eq(stockMovements.branchId, branchFilter)] : []),
+        ...(range.from ? [gte(stockMovements.createdAt, `${range.from}T00:00:00.000Z`)] : []),
+        ...(range.to ? [lte(stockMovements.createdAt, `${range.to}T23:59:59.999Z`)] : []),
+      );
+      const shiftWhere = and(
+        eq(shifts.workspaceId, workspace.id),
+        ...(branchFilter ? [eq(shifts.branchId, branchFilter)] : []),
+        ...(range.from ? [gte(shifts.openedAt, `${range.from}T00:00:00.000Z`)] : []),
+        ...(range.to ? [lte(shifts.openedAt, `${range.to}T23:59:59.999Z`)] : []),
+      );
+
+      const [exportOrders, exportItems, exportExpenses, exportMovements, exportShifts, exportProducts, exportIngredients] = await Promise.all([
+        db.select().from(orders).where(exportOrderWhere).orderBy(desc(orders.createdAt)),
+        db.select({
+          orderNo: orders.orderNo, createdAt: orders.createdAt,
+          productName: orderItems.productName, quantity: orderItems.quantity,
+          unitPrice: orderItems.unitPrice, unitCost: orderItems.unitCost, subtotal: orderItems.subtotal,
+        }).from(orderItems).innerJoin(orders, eq(orderItems.orderId, orders.id)).where(exportOrderWhere).orderBy(desc(orders.createdAt)),
+        db.select().from(expenses).where(expenseWhere).orderBy(desc(expenses.transactionDate), desc(expenses.createdAt)),
+        db.select().from(stockMovements).where(movementWhere).orderBy(desc(stockMovements.createdAt)),
+        db.select().from(shifts).where(shiftWhere).orderBy(desc(shifts.openedAt)),
+        db.select().from(products).where(eq(products.workspaceId, workspace.id)).orderBy(products.category, products.name),
+        db.select().from(ingredients).where(eq(ingredients.workspaceId, workspace.id)).orderBy(ingredients.name),
+      ]);
+
+      const branchName = new Map(branchList.map((row) => [row.id, row.name]));
+      const ingredientName = new Map(exportIngredients.map((row) => [row.id, row.name]));
+      const customers = new Map<string, { name: string; phone: string; count: number; total: number; last: string }>();
+      for (const order of exportOrders) {
+        if (!order.customerName && !order.customerPhone) continue;
+        const key = order.customerPhone || order.customerName.toLocaleLowerCase("id-ID");
+        const current = customers.get(key) ?? { name: order.customerName, phone: order.customerPhone, count: 0, total: 0, last: "" };
+        current.name ||= order.customerName;
+        current.phone ||= order.customerPhone;
+        current.count += order.status === "void" ? 0 : 1;
+        current.total += order.status === "void" ? 0 : order.total;
+        if (order.createdAt > current.last) current.last = order.createdAt;
+        customers.set(key, current);
+      }
+
+      const sheets: SpreadsheetSheet[] = [
+        { name: "Ringkasan", rows: [
+          ["Laporan", workspace.name], ["Periode", range.from ?? "Awal", range.to ?? "Sekarang"],
+          ["Penjualan bersih", sales], ["HPP", cogs], ["Laba kotor", sales - cogs],
+          ["Biaya operasional", expenseTotal], ["Laba bersih", sales - cogs - expenseTotal],
+          ["Jumlah transaksi", Number(salesRow?.count ?? 0)], ["Diskon", Number(salesRow?.discount ?? 0)], ["Pajak", Number(salesRow?.tax ?? 0)],
+        ] },
+        { name: "Transaksi", rows: [["Tanggal", "No. transaksi", "Outlet", "Kasir", "Pelanggan", "Telepon", "Pembayaran", "Status", "Subtotal", "Diskon", "Pajak", "Total"], ...exportOrders.map((row) => [row.createdAt, row.orderNo, branchName.get(row.branchId) ?? row.branchId, row.cashierEmail, row.customerName, row.customerPhone, row.paymentMethod, row.status, row.subtotal, row.discount, row.tax, row.total])] },
+        { name: "Detail Penjualan", rows: [["Tanggal", "No. transaksi", "Produk", "Jumlah", "Harga jual", "HPP satuan", "Subtotal"], ...exportItems.map((row) => [row.createdAt, row.orderNo, row.productName, row.quantity, row.unitPrice, row.unitCost, row.subtotal])] },
+        { name: "Pelanggan", rows: [["Nama", "Telepon", "Jumlah transaksi", "Total belanja", "Transaksi terakhir"], ...[...customers.values()].sort((a, b) => b.total - a.total).map((row) => [row.name, row.phone, row.count, row.total, row.last])] },
+        { name: "Produk", rows: [["Nama", "SKU", "Kategori", "Harga jual", "HPP", "Status"], ...exportProducts.map((row) => [row.name, row.sku, row.category, row.price, row.cost, row.isActive ? "Aktif" : "Arsip"])] },
+        { name: "Stok", rows: [["Bahan", "Satuan", "Stok", "Minimum", "Biaya rata-rata", "Supplier", "Status"], ...exportIngredients.map((row) => [row.name, row.unit, row.stockQty, row.minimumStock, row.averageCost, row.supplier, row.isActive ? "Aktif" : "Arsip"])] },
+        { name: "Pergerakan Stok", rows: [["Tanggal", "Outlet", "Bahan", "Jenis", "Jumlah", "Biaya satuan", "Supplier", "Catatan"], ...exportMovements.map((row) => [row.createdAt, branchName.get(row.branchId) ?? row.branchId, ingredientName.get(row.ingredientId) ?? row.ingredientId, row.type, row.quantity, row.unitCost, row.supplier, row.note])] },
+        { name: "Biaya", rows: [["Tanggal", "Outlet", "Kategori", "Nominal", "Pembayaran", "Catatan"], ...exportExpenses.map((row) => [row.transactionDate, branchName.get(row.branchId) ?? row.branchId, row.category, row.amount, row.paymentMethod, row.note])] },
+        { name: "Shift", rows: [["Dibuka", "Ditutup", "Outlet", "Kasir", "Modal awal", "Kas seharusnya", "Kas aktual", "Selisih", "Status", "Catatan"], ...exportShifts.map((row) => [row.openedAt, row.closedAt, branchName.get(row.branchId) ?? row.branchId, row.cashierName, row.openingCash, row.expectedCash, row.actualCash, row.variance, row.status, row.note])] },
+      ];
+      const file = buildSpreadsheetXml(sheets);
+      const filename = `laporan-${workspace.slug}-${new Date().toISOString().slice(0, 10)}.xls`;
+      return new Response(file, {
+        headers: {
+          "Content-Type": "application/vnd.ms-excel; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "Cache-Control": "private, no-store",
+        },
+      });
+    }
+
     // Daftar untuk ditampilkan dibatasi; item pesanan hanya diambil untuk pesanan yang
     // benar-benar dikirim, bukan seluruh riwayat workspace.
     const orderRows = await db.select().from(orders)
@@ -334,10 +419,6 @@ export async function GET(request: Request) {
         : db.select().from(subscriptionClaims).where(eq(subscriptionClaims.workspaceId, workspace.id)).orderBy(desc(subscriptionClaims.createdAt)).limit(20),
       platformAdmin ? db.select().from(platformSettings) : Promise.resolve([] as Array<typeof platformSettings.$inferSelect>),
     ]);
-
-    const sales = Number(salesRow?.sales ?? 0);
-    const cogs = Math.round(Number(cogsRow?.cogs ?? 0));
-    const expenseTotal = Number(expenseRow?.total ?? 0);
 
     return Response.json({
       workspace,

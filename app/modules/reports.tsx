@@ -1,6 +1,6 @@
 "use client";
 
-import { BarChart3 } from "lucide-react";
+import { BarChart3, Download } from "lucide-react";
 import { Empty, money, number, type ModuleProps } from "./shared";
 
 /** Rentang siap pakai — pemilik kedai hampir selalu membandingkan periode, bukan tanggal lepas. */
@@ -56,6 +56,10 @@ export function RangeFilter({ data, setRange }: Pick<ModuleProps, "data" | "setR
 
 export default function Reports({ data, setRange }: ModuleProps) {
   const { summary, range } = data;
+  const exportParams = new URLSearchParams({ export: "spreadsheet" });
+  if (data.activeBranchId) exportParams.set("branch", data.activeBranchId);
+  if (range.from) exportParams.set("from", range.from);
+  if (range.to) exportParams.set("to", range.to);
 
   // Semua angka di bawah datang dari server, dihitung atas rentang yang sama untuk penjualan,
   // HPP, dan biaya. Menjumlahkannya ulang di browser dari daftar yang dipotong `limit` adalah
@@ -81,7 +85,10 @@ export default function Reports({ data, setRange }: ModuleProps) {
           <article className="data-panel profit-card">
             <div className="panel-header">
               <div><h2>Laba rugi sederhana</h2><p>Data {periodLabel}</p></div>
-              <button type="button" onClick={() => window.print()}>Cetak laporan</button>
+              <div className="row-actions">
+                <a className="row-action" href={`/api/app?${exportParams}`}><Download size={15} /> Unduh Spreadsheet</a>
+                <button type="button" onClick={() => window.print()}>Cetak laporan</button>
+              </div>
             </div>
             <div className="profit-lines">
               <div><span>Penjualan bersih</span><b>{money.format(summary.sales)}</b></div>
